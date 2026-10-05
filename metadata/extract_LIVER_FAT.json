@@ -1,0 +1,19 @@
+{
+  "trait": "LIVER_FAT",
+  "path": "data/reference/gwas/liu2021/GCST90016673_buildGRCh37.tsv.gz",
+  "sha256": "6ee6bebcbedb8ff455097de79d5bb5ea31bb8a2f07720d73b7206525f86e3ce3",
+  "counts": {
+    "raw_rows": 9390169,
+    "target_valid_rows": 83282
+  },
+  "coordinate_keys": 83191,
+  "actual_variant_keys": 83191,
+  "allele_status_counts": {
+    "exact_unordered_pair": 83065,
+    "literal_pair_mismatch_or_missing": 121,
+    "ambiguous_minimum_P_alleles": 5
+  },
+  "replay_genes": 283,
+  "all_replays_passed": true,
+  "script_sha256": "4217c683884c131c382b6bced1cc2792ce968eafa9ba8b240974a0e03cbfff0d"
+}

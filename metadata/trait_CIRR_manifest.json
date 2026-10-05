@@ -1,0 +1,20 @@
+{
+  "trait": "CIRR",
+  "started_utc": "2026-09-28T12:34:19.254121+00:00",
+  "completed_utc": "2026-09-28T12:36:29.311268+00:00",
+  "input_path": "data/reference/gwas/grch37_primary/GCST90319877.tsv",
+  "input_sha256": "e5f942fa4e5e016b2a39898891529567ca6cc32e40ace3fe9ff272ed58e9b9c8",
+  "saved_gene_source": "result/08_evidence_completion/acat_native_grch37_primary/acat_CIRR_9trait.tsv",
+  "saved_gene_sha256": "bd476bf230d20e55fc731a1974323c73ab144305fac7b94b36d05f903b016a49",
+  "script_sha256": "167923267acd940a40ae644e5e74173b97ce3ea2f14d8e82ae1827579ba52aae",
+  "n_genes": 18321,
+  "n_evaluable": 18320,
+  "legacy_replay_passed": true,
+  "raw_adapter_audit": {},
+  "method": "exact_P1_to_1_minus_1_over_d_sensitivity",
+  "primary_replaced": false,
+  "HCC_loaded": false,
+  "driver_sha256": "509635770e669edbaadfa92de1580e222829dd6a474f4fe1b2d7f88a8ba99184",
+  "charter_sha256": "627473e3941fc96d87a3ecb5bb40a1a5087d75e2f3af018c1828efba3542cbb9",
+  "nonboundary_unchanged": true
+}

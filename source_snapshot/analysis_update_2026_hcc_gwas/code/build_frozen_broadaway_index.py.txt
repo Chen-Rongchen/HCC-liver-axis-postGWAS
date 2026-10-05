@@ -1,0 +1,275 @@
+#!/usr/bin/env python3
+"""Index the *frozen* Broadaway GRCh37 SNP-gene assignment without changing it.
+
+The original primary ACAT implementation joins GWAS records by chromosome and
+GRCh37 position.  This cache adds the published Broadaway allele pair solely
+for the 2026 build/allele audit, and stores every original gene-SNP row as
+integer indices so subsequent endpoints do not require repeated 12-GB parses.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+from datetime import datetime, timezone
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+
+
+ROOT = Path(__file__).resolve().parents[2]
+UPDATE = ROOT / "analysis_update_2026_hcc_gwas"
+CACHE = UPDATE / "03_qc" / "frozen_map_cache"
+SOURCE = ROOT / "data/phaseB/broadaway2024_liver_eqtl/Marginal_byChr"
+FROZEN_RUN = ROOT / "result/08_evidence_completion/acat_native_grch37_primary/run_manifest.json"
+FROZEN_GENES = ROOT / "result/08_evidence_completion/acat_native_grch37_primary/gene_snp_counts_9trait.tsv"
+SUCCESS = CACHE / "SUCCESS.json"
+BASELINE_SUCCESS = UPDATE / "04_baseline_reproduction" / "SUCCESS.json"
+BASELINE_SUMMARY = UPDATE / "04_baseline_reproduction" / "baseline_comparison_summary.tsv"
+CHUNK = 1_000_000
+TOKEN_BITS = 17
+PAIR_BITS = 2 * TOKEN_BITS
+MAX_TOKEN = 2**TOKEN_BITS - 1
+
+
+def sha256(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(16 * 1024 * 1024), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
+def encode_keys(
+    frame: pd.DataFrame,
+    token_lookup: dict[str, int],
+    *,
+    add_tokens: bool,
+) -> tuple[np.ndarray, np.ndarray]:
+    pos = pd.to_numeric(frame["POS"], errors="coerce").to_numpy(dtype=float)
+    nea_text = frame["NEA"].astype(str).str.upper()
+    ea_text = frame["EA"].astype(str).str.upper()
+    # The frozen Broadaway resource legitimately contains sequence indels and
+    # symbolic alleles such as <INS:ME:ALU>, <CN0>, and <INV>.  Preserve them
+    # verbatim as audit tokens; only empty/equal allele pairs are invalid.
+    allele_valid = nea_text.str.len().gt(0) & ea_text.str.len().gt(0) & nea_text.ne(ea_text)
+    if add_tokens:
+        observed = pd.unique(pd.concat([nea_text[allele_valid], ea_text[allele_valid]], ignore_index=True))
+        for token in observed:
+            if token not in token_lookup:
+                token_lookup[token] = len(token_lookup)
+        if len(token_lookup) - 1 > MAX_TOKEN:
+            raise RuntimeError(f"More than {MAX_TOKEN + 1} distinct allele strings on one chromosome")
+    nea = nea_text.map(token_lookup).fillna(-1).to_numpy(dtype=np.int64)
+    ea = ea_text.map(token_lookup).fillna(-1).to_numpy(dtype=np.int64)
+    valid = np.isfinite(pos) & (pos > 0) & allele_valid.to_numpy() & (nea >= 0) & (ea >= 0)
+    lo = np.minimum(nea, ea).astype(np.uint64)
+    hi = np.maximum(nea, ea).astype(np.uint64)
+    pair = (lo << np.uint64(TOKEN_BITS)) | hi
+    keys = (pos.astype(np.uint64) << np.uint64(PAIR_BITS)) | pair
+    return keys, valid
+
+
+def validate_frozen_inputs() -> tuple[dict, list[dict[str, object]]]:
+    manifest = json.loads(FROZEN_RUN.read_text())
+    if manifest.get("status") != "complete" or manifest.get("analysis_mode") != "native_grch37_primary":
+        raise RuntimeError("The source ACAT run is not the completed native-GRCh37 primary run")
+    frozen = {str(item["path"]): item for item in manifest["broadaway_gene_snp_map"]}
+    mtime_mismatches: list[dict[str, object]] = []
+    for chrom in range(1, 23):
+        path = SOURCE / f"Liver_eQTL_Meta_Analysis_20240305_CHR{chrom}.tsv"
+        rel = str(path.relative_to(ROOT))
+        item = frozen.get(rel)
+        if item is None:
+            raise RuntimeError(f"Chromosome source absent from frozen manifest: {rel}")
+        stat = path.stat()
+        if stat.st_size != int(item["size_bytes"]):
+            raise RuntimeError(f"Frozen Broadaway source size changed since the primary run: {rel}")
+        if stat.st_mtime_ns != int(item["mtime_ns"]):
+            mtime_mismatches.append(
+                {
+                    "path": rel,
+                    "frozen_mtime_ns": int(item["mtime_ns"]),
+                    "current_mtime_ns": stat.st_mtime_ns,
+                    "size_bytes": stat.st_size,
+                }
+            )
+    if mtime_mismatches:
+        baseline = json.loads(BASELINE_SUCCESS.read_text()) if BASELINE_SUCCESS.is_file() else {}
+        summary = pd.read_csv(BASELINE_SUMMARY, sep="\t") if BASELINE_SUMMARY.is_file() else pd.DataFrame()
+        raw_checks = summary[summary["check"].isin(["HCC_EUR_raw_to_gene_ACAT", "HCC_BBJ_raw_to_gene_ACAT"])] if len(summary) else summary
+        if baseline.get("status") != "pass" or len(raw_checks) != 2 or not raw_checks["passed"].astype(bool).all() or int(raw_checks["n_mismatches"].sum()) != 0:
+            raise RuntimeError(
+                "Broadaway source mtimes changed and the required direct raw-to-gene baseline equivalence evidence is absent"
+            )
+    return manifest, mtime_mismatches
+
+
+def existing_cache_valid(frozen_fingerprint: str) -> bool:
+    if not SUCCESS.is_file():
+        return False
+    try:
+        status = json.loads(SUCCESS.read_text())
+    except Exception:
+        return False
+    if status.get("status") != "complete" or status.get("frozen_run_fingerprint") != frozen_fingerprint:
+        return False
+    required = [CACHE / "gene_registry.tsv"]
+    for chrom in range(1, 23):
+        required.extend(
+            [
+                CACHE / f"chr{chrom:02d}_variant_keys.npy",
+                CACHE / f"chr{chrom:02d}_positions.npy",
+                CACHE / f"chr{chrom:02d}_allele_tokens.tsv",
+                CACHE / f"chr{chrom:02d}_gene_index.npy",
+                CACHE / f"chr{chrom:02d}_variant_index.npy",
+            ]
+        )
+    return all(path.is_file() for path in required)
+
+
+def main() -> None:
+    CACHE.mkdir(parents=True, exist_ok=True)
+    frozen_manifest, mtime_mismatches = validate_frozen_inputs()
+    fingerprint = str(frozen_manifest["fingerprint"])
+    if existing_cache_valid(fingerprint):
+        print("Frozen Broadaway cache already complete and matches the locked run")
+        return
+
+    genes = pd.read_csv(FROZEN_GENES, sep="\t")
+    if len(genes) != 18_321 or genes["gene"].duplicated().any():
+        raise RuntimeError("Frozen 18,321-gene registry is missing or non-unique")
+    genes = genes.reset_index(drop=True)
+    genes.insert(0, "gene_index", np.arange(len(genes), dtype=np.int32))
+    gene_lookup = dict(zip(genes["gene"], genes["gene_index"]))
+    expected_counts = genes["nsnps_cis"].to_numpy(dtype=np.int64)
+    observed_counts = np.zeros(len(genes), dtype=np.int64)
+    eqtl_min = np.full(len(genes), np.inf, dtype=float)
+    audit_rows: list[dict[str, object]] = []
+
+    for chrom in range(1, 23):
+        source = SOURCE / f"Liver_eQTL_Meta_Analysis_20240305_CHR{chrom}.tsv"
+        print(f"chr{chrom}: indexing unique frozen coordinate/allele keys", flush=True)
+        key_chunks: list[np.ndarray] = []
+        token_lookup: dict[str, int] = {}
+        raw_records = invalid_records = 0
+        for chunk in pd.read_csv(
+            source,
+            sep="\t",
+            usecols=["POS", "NEA", "EA"],
+            chunksize=CHUNK,
+            low_memory=False,
+            keep_default_na=False,
+        ):
+            keys, valid = encode_keys(chunk, token_lookup, add_tokens=True)
+            raw_records += len(chunk)
+            invalid_records += int((~valid).sum())
+            key_chunks.append(keys[valid])
+        if invalid_records:
+            raise RuntimeError(
+                f"chr{chrom}: {invalid_records} frozen SNP-gene rows lack a non-empty unequal allele pair; "
+                "the allele-aware cache cannot silently drop a frozen assignment"
+            )
+        keys = np.unique(np.concatenate(key_chunks)).astype(np.uint64, copy=False)
+        positions = np.unique(keys >> np.uint64(PAIR_BITS)).astype(np.int64, copy=False)
+        np.save(CACHE / f"chr{chrom:02d}_variant_keys.npy", keys, allow_pickle=False)
+        np.save(CACHE / f"chr{chrom:02d}_positions.npy", positions, allow_pickle=False)
+        pd.DataFrame(
+            sorted(((code, allele) for allele, code in token_lookup.items())),
+            columns=["allele_code", "allele"],
+        ).to_csv(CACHE / f"chr{chrom:02d}_allele_tokens.tsv", sep="\t", index=False)
+
+        expected_chr = int(genes.loc[genes["chr"].eq(chrom), "nsnps_cis"].sum())
+        if raw_records != expected_chr:
+            raise RuntimeError(
+                f"chr{chrom}: source contains {raw_records} records but frozen gene counts require {expected_chr}"
+            )
+        gene_mm = np.lib.format.open_memmap(
+            CACHE / f"chr{chrom:02d}_gene_index.npy", mode="w+", dtype=np.int32, shape=(raw_records,)
+        )
+        variant_mm = np.lib.format.open_memmap(
+            CACHE / f"chr{chrom:02d}_variant_index.npy", mode="w+", dtype=np.uint32, shape=(raw_records,)
+        )
+
+        offset = 0
+        for chunk in pd.read_csv(
+            source,
+            sep="\t",
+            usecols=["POS", "NEA", "EA", "PVAL", "GeneSymbol"],
+            chunksize=CHUNK,
+            low_memory=False,
+            keep_default_na=False,
+        ):
+            chunk_keys, valid = encode_keys(chunk, token_lookup, add_tokens=False)
+            p = pd.to_numeric(chunk["PVAL"], errors="coerce").to_numpy(dtype=float)
+            g = chunk["GeneSymbol"].map(gene_lookup)
+            if not valid.all() or g.isna().any() or not np.isfinite(p).all() or ((p < 0) | (p > 1)).any():
+                raise RuntimeError(f"chr{chrom}: source row violates the frozen POS/allele/gene/P contract")
+            gidx = g.to_numpy(dtype=np.int32)
+            vidx = np.searchsorted(keys, chunk_keys).astype(np.uint32)
+            if (vidx >= len(keys)).any() or not np.array_equal(keys[vidx], chunk_keys):
+                raise RuntimeError(f"chr{chrom}: internal variant-key index failure")
+            stop = offset + len(chunk)
+            gene_mm[offset:stop] = gidx
+            variant_mm[offset:stop] = vidx
+            observed_counts += np.bincount(gidx, minlength=len(genes))
+            # Gene rows are contiguous in the frozen files, but chunk edges
+            # can split a gene.  Per-chunk grouped minima combine safely.
+            minima = pd.DataFrame({"gene_index": gidx, "p": p}).groupby("gene_index", sort=False)["p"].min()
+            m_idx = minima.index.to_numpy(dtype=np.int32)
+            eqtl_min[m_idx] = np.minimum(eqtl_min[m_idx], minima.to_numpy(dtype=float))
+            offset = stop
+        gene_mm.flush()
+        variant_mm.flush()
+        if offset != raw_records:
+            raise RuntimeError(f"chr{chrom}: association-cache length mismatch")
+
+        audit_rows.append(
+            {
+                "chromosome": chrom,
+                "source_file": str(source.relative_to(ROOT)),
+                "source_bytes": source.stat().st_size,
+                "source_mtime_ns": source.stat().st_mtime_ns,
+                "frozen_gene_snp_records": raw_records,
+                "unique_position_allele_keys": len(keys),
+                "unique_positions": len(positions),
+                "multiallelic_position_excess": len(keys) - len(positions),
+                "distinct_allele_strings": len(token_lookup),
+                "invalid_allele_records": invalid_records,
+            }
+        )
+        del gene_mm, variant_mm, keys, positions, key_chunks
+
+    if not np.array_equal(observed_counts, expected_counts):
+        bad = np.flatnonzero(observed_counts != expected_counts)
+        raise RuntimeError(f"Cached SNP-gene row counts disagree for {len(bad)} frozen genes")
+    if not np.isfinite(eqtl_min).all():
+        raise RuntimeError("At least one frozen gene lacks a finite eQTL P value")
+
+    genes["min_eqtl_p"] = eqtl_min
+    genes.to_csv(CACHE / "gene_registry.tsv", sep="\t", index=False, float_format="%.17g")
+    audit = pd.DataFrame(audit_rows)
+    audit.to_csv(CACHE / "frozen_map_index_manifest.tsv", sep="\t", index=False)
+    status = {
+        "status": "complete",
+        "completed_utc": datetime.now(timezone.utc).isoformat(),
+        "frozen_run_fingerprint": fingerprint,
+        "frozen_gene_universe": len(genes),
+        "frozen_gene_snp_records": int(audit["frozen_gene_snp_records"].sum()),
+        "unique_position_allele_keys": int(audit["unique_position_allele_keys"].sum()),
+        "unique_positions_chromosome_summed": int(audit["unique_positions"].sum()),
+        "gene_registry_sha256": sha256(CACHE / "gene_registry.tsv"),
+        "index_manifest_sha256": sha256(CACHE / "frozen_map_index_manifest.tsv"),
+        "encoding": f"uint64=(GRCh37_position<<{PAIR_BITS})|(min_token_code<<{TOKEN_BITS})|max_token_code; per-chromosome deterministic allele-string dictionaries",
+        "mapping_policy": "Every frozen Broadaway gene-SNP row retained; alleles add an audit key and do not redefine gene assignment",
+        "source_mtime_mismatch_count": len(mtime_mismatches),
+        "mtime_mismatch_disposition": "accepted only because all source sizes match and direct old EUR/BBJ raw-to-gene ACAT reproduction had zero mismatches",
+    }
+    pd.DataFrame(mtime_mismatches).to_csv(CACHE / "source_mtime_audit.tsv", sep="\t", index=False)
+    SUCCESS.write_text(json.dumps(status, indent=2, sort_keys=True) + "\n")
+    print(json.dumps(status, indent=2), flush=True)
+
+
+if __name__ == "__main__":
+    main()

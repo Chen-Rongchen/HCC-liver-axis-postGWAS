@@ -1,0 +1,9 @@
+{
+  "input_key": "GRCh37:1:220970028:A:G",
+  "rsid": "rs2642438",
+  "scope": "Additional input named in main text and Table 2; not an added Figure 3 panel",
+  "query_url": "https://grch37.rest.ensembl.org/variation/human/rs2642438?content-type=application/json",
+  "response_sha256": "3a793a15e1ea3247f9b85fd13bcf481b4dd0ffdc2c1af21a756d0ff5095d77f0",
+  "raw_response": "{\"mappings\":[{\"seq_region_name\":\"1\",\"start\":220970028,\"location\":\"1:220970028-220970028\",\"assembly_name\":\"GRCh37\",\"allele_string\":\"A/C/G/T\",\"coord_system\":\"chromosome\",\"strand\":1,\"end\":220970028,\"ancestral_allele\":\"G\"}],\"name\":\"rs2642438\",\"MAF\":0.190495,\"ambiguity\":\"N\",\"synonyms\":[\"rs52817751\",\"rs17858100\",\"rs61416577\",\"rs17845269\",\"rs17649336\",\"VAR_030129\",\"NM_022746.3:c.493A>T\",\"NM_022746.4:c.493A>G\",\"NP_073583.3:p.Thr165Ala\",\"NP_073583.3:p.Thr165Ser\",\"NM_022746.4:c.493A>T\",\"NM_022746.4:c.493A>C\",\"NM_022746.3:c.493A>C\",\"NM_022746.3:c.493A>G\",\"NP_073583.3:p.Thr165Pro\"],\"evidence\":[\"Frequency\",\"1000Genomes\",\"Cited\",\"ESP\",\"Phenotype_or_Disease\",\"ExAC\",\"TOPMed\",\"gnomAD\"],\"var_class\":\"SNP\",\"minor_allele\":\"A\",\"source\":\"Variants (including SNPs and indels) imported from dbSNP\",\"most_severe_consequence\":\"missense_variant\"}",
+  "interpretation": "Coordinate and literal A/G subset match the multiallelic GRCh37 database record; no effect direction or new HGVS description inferred"
+}

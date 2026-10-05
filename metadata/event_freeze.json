@@ -1,0 +1,6 @@
+{
+  "time_utc": "2026-09-28T18:28:49.865830+00:00",
+  "charter_sha256": "3311a7efccc04928e896d90d4f6d6bf2f9e90a8475c60943579c280b30427b24",
+  "script_sha256": "5d866296664e145b2bff769aaa15699712648cc7c6e34a07295c82c886cba843",
+  "scope": "post_result_bounded_measurement_not_prospective_blinding"
+}

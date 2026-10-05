@@ -1,0 +1,19 @@
+"""Account for tied/floor-censored minima; no new threshold or model."""
+from pathlib import Path
+import pandas as pd
+OUT=Path(__file__).resolve().parent
+def main():
+    e=pd.read_csv(OUT/'support_events.tsv',sep='\t',float_precision='round_trip')
+    p=pd.read_csv(OUT/'within_gene_support_event_pairs.tsv',sep='\t',float_precision='round_trip')
+    q=e[['event_id','gene_symbol','trait','minimum_P','n_minimum_P_variants','n_verified_minimum_P_variants']].copy()
+    q['at_existing_adapter_floor']=q.minimum_P.le(1e-300)
+    q['tied_minimum']=q.n_minimum_P_variants.gt(1)
+    q.to_csv(OUT/'minimum_tie_and_floor_audit.tsv',sep='\t',index=False)
+    floor=set(q.loc[q.at_existing_adapter_floor,'event_id']);ties=set(q.loc[q.tied_minimum,'event_id'])
+    p['either_event_at_floor']=p.event_a.isin(floor)|p.event_b.isin(floor)
+    p['either_event_tied']=p.event_a.isin(ties)|p.event_b.isin(ties)
+    s=p.groupby(['either_event_at_floor','either_event_tied']).agg(n_pairs=('gene_symbol','size'),n_genes=('gene_symbol','nunique'),n_pairs_shared_minimum=('shared_verified_minimum_variant','sum')).reset_index()
+    assert s.n_pairs.sum()==len(p) and s.n_pairs_shared_minimum.sum()==p.shared_verified_minimum_variant.sum()
+    s.to_csv(OUT/'pair_minimum_censoring_summary.tsv',sep='\t',index=False)
+    print(s.to_string(index=False))
+if __name__=='__main__':main()

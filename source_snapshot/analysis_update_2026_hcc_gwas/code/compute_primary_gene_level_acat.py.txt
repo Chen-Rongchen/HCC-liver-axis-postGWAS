@@ -1,0 +1,214 @@
+#!/usr/bin/env python3
+"""Compute 2026 EUR/EAS gene-level ACAT on the frozen Broadaway map."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import math
+from datetime import datetime, timezone
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+
+
+ROOT = Path(__file__).resolve().parents[2]
+UPDATE = ROOT / "analysis_update_2026_hcc_gwas"
+QC_GATE = UPDATE / "03_qc/PRIMARY_BATCH_QC_SUCCESS.json"
+MAP = UPDATE / "03_qc/frozen_map_cache"
+ADAPTED = UPDATE / "05_gene_level/adapted_variant_cache"
+OUT = UPDATE / "05_gene_level"
+
+ENDPOINTS = {
+    "GCST90860790": {
+        "label": "new_EUR_METAL",
+        "output": "new_eur_gene_level.tsv",
+        "cases": 8216,
+        "controls": 1_558_609,
+    },
+    "GCST90860791": {
+        "label": "new_EAS_METAL",
+        "output": "new_eas_gene_level.tsv",
+        "cases": 7355,
+        "controls": 629_454,
+    },
+}
+
+
+def sha256(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(16 * 1024 * 1024), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
+def acat(p_values: np.ndarray) -> float | None:
+    """Exact scalar contract from 02_rerun_acat_9trait.py (equal weights)."""
+    values = [
+        min(max(float(p), 1e-300), 1.0)
+        for p in p_values
+        if p is not None and math.isfinite(float(p)) and 0 <= float(p) <= 1
+    ]
+    if not values:
+        return None
+    if len(values) == 1:
+        return values[0]
+    weight = 1.0 / len(values)
+    transformed = []
+    for p in values:
+        if p >= 1.0:
+            transformed.append(0.0)
+        elif p <= 0.0:
+            transformed.append(math.tan((0.5 - 1e-16) * math.pi))
+        else:
+            transformed.append(math.tan((0.5 - p) * math.pi))
+    statistic = sum(weight * value for value in transformed)
+    combined = 0.5 - math.atan(statistic) / math.pi
+    return max(combined, 1e-300)
+
+
+def compute_endpoint(endpoint: str, spec: dict, genes: pd.DataFrame) -> pd.DataFrame:
+    rows: list[dict[str, object] | None] = [None] * len(genes)
+    run_counts = np.zeros(len(genes), dtype=np.int32)
+    for chrom in range(1, 23):
+        gene_idx = np.load(MAP / f"chr{chrom:02d}_gene_index.npy", mmap_mode="r")
+        starts = np.r_[0, np.flatnonzero(np.diff(gene_idx) != 0) + 1]
+        run_counts += np.bincount(gene_idx[starts], minlength=len(genes))
+    if (run_counts == 0).any():
+        raise RuntimeError(f"{endpoint}: at least one frozen gene has no source mapping run")
+    multi_run = np.flatnonzero(run_counts > 1)
+    multi_parts: dict[int, dict[str, object]] = {
+        int(gidx): {"p": [], "n": [], "total": 0} for gidx in multi_run
+    }
+    seen = np.zeros(len(genes), dtype=np.int32)
+
+    def make_row(gidx: int, matched: np.ndarray, n_values: np.ndarray, total: int) -> dict[str, object]:
+        row = genes.iloc[gidx]
+        return {
+            "gene": row.gene,
+            "ensg": row.ensg,
+            "chr": int(row.chr),
+            "endpoint_accession": endpoint,
+            "endpoint_label": spec["label"],
+            "source_mapping_runs": int(run_counts[gidx]),
+            "nsnps_matched": len(matched),
+            "nsnps_total": int(total),
+            "mapping_fraction": len(matched) / total,
+            "evaluable": bool(len(matched)),
+            "acat_p": acat(matched),
+            "min_p": float(matched.min()) if len(matched) else np.nan,
+            "max_n_author_weight": float(n_values.max()) if len(n_values) else np.nan,
+            "min_eqtl_p": float(row.min_eqtl_p),
+            "design_cases": spec["cases"],
+            "design_controls": spec["controls"],
+            "design_total_n": spec["cases"] + spec["controls"],
+            "case_fraction": spec["cases"] / (spec["cases"] + spec["controls"]),
+            "raw_n_policy": "author METAL Weight retained for provenance only; final design N governs case-control analyses",
+        }
+
+    for chrom in range(1, 23):
+        print(f"{endpoint}: chr{chrom}", flush=True)
+        gene_idx = np.load(MAP / f"chr{chrom:02d}_gene_index.npy", mmap_mode="r")
+        variant_idx = np.load(MAP / f"chr{chrom:02d}_variant_index.npy", mmap_mode="r")
+        p = np.load(ADAPTED / endpoint / f"chr{chrom:02d}_p.npy", mmap_mode="r")
+        n = np.load(ADAPTED / endpoint / f"chr{chrom:02d}_n.npy", mmap_mode="r")
+        if len(gene_idx) != len(variant_idx):
+            raise RuntimeError(f"{endpoint} chr{chrom}: frozen association-index lengths differ")
+        boundaries = np.flatnonzero(np.diff(gene_idx) != 0) + 1
+        starts = np.r_[0, boundaries]
+        stops = np.r_[boundaries, len(gene_idx)]
+        for start, stop in zip(starts, stops):
+            gidx = int(gene_idx[start])
+            seen[gidx] += 1
+            indices = variant_idx[start:stop]
+            values = np.asarray(p[indices], dtype=float)
+            finite = np.isfinite(values)
+            matched = values[finite]
+            n_values = np.asarray(n[indices], dtype=float)[finite]
+            if run_counts[gidx] == 1:
+                rows[gidx] = make_row(gidx, matched, n_values, int(stop - start))
+            else:
+                part = multi_parts[gidx]
+                part["p"].append(matched.copy())
+                part["n"].append(n_values.copy())
+                part["total"] = int(part["total"]) + int(stop - start)
+    for gidx, part in multi_parts.items():
+        matched = np.concatenate(part["p"]) if part["p"] else np.array([], dtype=float)
+        n_values = np.concatenate(part["n"]) if part["n"] else np.array([], dtype=float)
+        rows[gidx] = make_row(gidx, matched, n_values, int(part["total"]))
+    if not np.array_equal(seen, run_counts) or any(row is None for row in rows):
+        raise RuntimeError(f"{endpoint}: not all 18,321 frozen genes were encountered")
+    result = pd.DataFrame(rows)
+    if not np.array_equal(result["nsnps_total"].to_numpy(dtype=int), genes["nsnps_cis"].to_numpy(dtype=int)):
+        raise RuntimeError(f"{endpoint}: cached total SNP counts differ from the frozen gene registry")
+    return result.sort_values("gene").reset_index(drop=True)
+
+
+def main() -> None:
+    gate = json.loads(QC_GATE.read_text())
+    if gate.get("status") != "pass_with_provenance_warnings":
+        raise RuntimeError("Primary EUR/EAS QC gate is not authorized")
+    genes = pd.read_csv(MAP / "gene_registry.tsv", sep="\t")
+    if len(genes) != 18_321:
+        raise RuntimeError("Frozen gene registry does not contain 18,321 genes")
+
+    summaries = []
+    output_hashes = {}
+    for endpoint, spec in ENDPOINTS.items():
+        result = compute_endpoint(endpoint, spec, genes)
+        output = OUT / spec["output"]
+        result.to_csv(output, sep="\t", index=False, na_rep="NA", float_format="%.17g")
+        evaluable = result[result.evaluable]
+        summaries.append(
+            {
+                "endpoint": endpoint,
+                "label": spec["label"],
+                "frozen_gene_universe": len(result),
+                "evaluable_genes": len(evaluable),
+                "unevaluable_genes": int((~result.evaluable).sum()),
+                "matched_snp_gene_records": int(result.nsnps_matched.sum()),
+                "median_matched_snps_per_gene": float(evaluable.nsnps_matched.median()),
+                "median_mapping_fraction": float(result.mapping_fraction.median()),
+                "minimum_acat_p": float(evaluable.acat_p.min()),
+                "acat_p_equal_floor_genes": int(evaluable.acat_p.eq(1e-300).sum()),
+                "acat_p_q01": float(evaluable.acat_p.quantile(0.01)),
+                "acat_p_median": float(evaluable.acat_p.median()),
+                "acat_p_q99": float(evaluable.acat_p.quantile(0.99)),
+            }
+        )
+        output_hashes[spec["output"]] = sha256(output)
+
+    summary = pd.DataFrame(summaries)
+    summary.to_csv(OUT / "gene_level_qc_summary.tsv", sep="\t", index=False, float_format="%.12g")
+    lines = [
+        "# 2026 ancestry-specific HCC gene-level ACAT", "",
+        "Both endpoints use the unchanged 18,321-gene Broadaway SNP-gene universe, equal-weight scalar ACAT, and frozen 1e-300 P floor. Input variants had already passed the first-batch build/allele/duplicate gate.", "",
+    ]
+    for row in summary.itertuples(index=False):
+        lines.extend(
+            [
+                f"## {row.endpoint} ({row.label})", "",
+                f"- Evaluable genes: {row.evaluable_genes:,}/18,321.",
+                f"- Matched gene-SNP records: {row.matched_snp_gene_records:,}; median mapping fraction: {row.median_mapping_fraction:.3%}.",
+                f"- Gene-level ACAT range: {row.minimum_acat_p:.4g} to {row.acat_p_q99:.4g} at the 99th percentile; median {row.acat_p_median:.4g}.",
+                f"- ACAT floor genes: {row.acat_p_equal_floor_genes:,}.",
+                "",
+            ]
+        )
+    (OUT / "gene_level_report.md").write_text("\n".join(lines))
+    status = {
+        "status": "complete",
+        "completed_utc": datetime.now(timezone.utc).isoformat(),
+        "gene_universe": 18_321,
+        "acat_implementation": "exact scalar equal-weight contract copied from scripts/02_gene_level_liver_axis_nomination/02_rerun_acat_9trait.py",
+        "input_gate": str(QC_GATE.relative_to(ROOT)),
+        "output_sha256": output_hashes,
+    }
+    (OUT / "PRIMARY_GENE_LEVEL_SUCCESS.json").write_text(json.dumps(status, indent=2, sort_keys=True) + "\n")
+    print(json.dumps(status, indent=2), flush=True)
+
+
+if __name__ == "__main__":
+    main()

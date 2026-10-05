@@ -1,0 +1,103 @@
+"""Liver-only sensitivity reconciliation. Never reads HCC statistics or masks."""
+import json, math, hashlib, zipfile
+from pathlib import Path
+import pandas as pd
+import numpy as np
+from scipy.stats import spearmanr, rankdata
+from run_traits import prior, boundary
+
+OUT=Path(__file__).resolve().parent; BASE=OUT.parent; ROOT=BASE.parent
+rules=prior.load(ROOT/'scripts/18_amended_11trait_nomination/18_build_amended_11trait_primary.py','boundary_nomination_rules')
+features=prior.load(BASE/'code/01_audit_identifiability.py','boundary_feature_paths')
+TRAITS=prior.TRAITS
+def write(df,name): df.to_csv(OUT/name,sep='\t',index=False,na_rep='',float_format='%.17g')
+
+def main():
+    old=pd.read_csv(BASE/'23_liver_acat_audit/stable_liver_gene_registry.tsv',sep='\t',float_precision='round_trip')
+    new=old.copy(); rows=[]; size=[]; checks=[]
+    for t in TRAITS:
+        m=json.loads((OUT/f'{t}_manifest.json').read_text())
+        assert m['HCC_loaded'] is False and m['primary_replaced'] is False
+        assert m['legacy_replay_passed'] and m['nonboundary_unchanged']
+        x=pd.read_csv(OUT/f'{t}_gene_acat.tsv',sep='\t',float_precision='round_trip').set_index('gene')
+        assert len(x)==18321 and x.index.is_unique
+        new[f'{t}_acat_p']=new.gene_symbol.map(x.boundary_p)
+        new[f'{t}_rank_pct']=rules.rank_percentile(new[f'{t}_acat_p'])
+        new[f'{t}_support']=new[f'{t}_rank_pct'].le(.05)
+        values=new[f'{t}_acat_p'].to_numpy();valid_values=np.isfinite(values)
+        independent=np.ones(len(values));independent[valid_values]=rankdata(values[valid_values],method='average')/valid_values.sum()
+        assert np.array_equal(independent<=.05,new[f'{t}_support'].to_numpy())
+        assert (x.boundary_p.dropna()>=x.neutral_p.dropna()-1e-14).all()
+        checks.append(dict(trait=t,check='independent_rank_and_boundary_direction',passed=True,n_checks=2))
+        a=old[f'{t}_support'];b=new[f'{t}_support'];valid=x.boundary_p.notna()
+        rows.append(dict(trait=t,n_evaluable=int(valid.sum()),genes_P1=int(x.n_input_one.gt(0).sum()),
+                         neutral_support=int(a.sum()),boundary_support=int(b.sum()),
+                         retained=int((a&b).sum()),entered=int((~a&b).sum()),exited=int((a&~b).sum()),
+                         rank_spearman=spearmanr(old[f'{t}_rank_pct'],new[f'{t}_rank_pct']).statistic))
+        x['d_bin']=pd.qcut(x.nsnps_matched,4,duplicates='drop')
+        lookup=pd.DataFrame({'gene':new.gene_symbol,'changed':a.ne(b),'neutral_support':a,'boundary_support':b}).set_index('gene')
+        x=x.join(lookup,validate='one_to_one')
+        for label,g in x.groupby('d_bin',observed=True):
+            size.append(dict(trait=t,d_bin=str(label),n_genes=len(g),d_min=g.nsnps_matched.min(),d_max=g.nsnps_matched.max(),
+                             median_P1_fraction=(g.n_input_one/g.nsnps_matched.replace(0,np.nan)).median(),
+                             n_support_changed=int(g.changed.sum()),neutral_supported=int(g.neutral_support.sum()),boundary_supported=int(g.boundary_support.sum())))
+        for kind in ['replay_checks','synthetic_validation','real_validation']:
+            c=pd.read_csv(OUT/f'{t}_{kind}.tsv',sep='\t')
+            assert c.passed.all()
+            checks.append(dict(trait=t,check=kind,passed=True,n_checks=len(c)))
+        assert np.allclose(x.loc[x.n_input_one.eq(0),'boundary_p'],x.loc[x.n_input_one.eq(0),'neutral_p'],equal_nan=True,rtol=1e-12,atol=0)
+    for group,traits in rules.GROUPS.items():new[f'{group}_support']=new[[f'{t}_support' for t in traits]].any(axis=1)
+    new['n_liver_traits_supported']=new[[f'{t}_support' for t in TRAITS]].sum(axis=1)
+    new['n_domains_supported']=new[[f'{g}_support' for g in rules.GROUPS]].sum(axis=1)
+    new['liver_nomination_flag']=new.n_liver_traits_supported.gt(0)
+    new['N_tier']='none'
+    new.loc[new.liver_nomination_flag&new.n_domains_supported.ge(2),'N_tier']='N1'
+    new.loc[new.liver_nomination_flag&new.n_domains_supported.eq(1)&new.n_liver_traits_supported.ge(2),'N_tier']='N2'
+    new.loc[new.liver_nomination_flag&new.n_liver_traits_supported.eq(1),'N_tier']='N3'
+    delta=old[['gene_symbol','seed_gene']].copy()
+    delta['changed_support_traits']=[';'.join(t for t in TRAITS if old.iloc[i][f'{t}_support']!=new.iloc[i][f'{t}_support']) for i in range(len(old))]
+    for name,f in [('neutral',old),('boundary',new)]:
+        delta[name+'_B']=f.n_liver_traits_supported
+        delta[name+'_S']=1-f[[f'{t}_rank_pct' for t in TRAITS]].min(axis=1)
+        delta[name+'_nominee']=f.liver_nomination_flag&~f.seed_gene
+        delta[name+'_B4']=f.n_liver_traits_supported.ge(4)&~f.seed_gene
+    summary=dict(neutral_nominees=int(delta.neutral_nominee.sum()),boundary_nominees=int(delta.boundary_nominee.sum()),
+                 nominee_entered=int((~delta.neutral_nominee&delta.boundary_nominee).sum()),nominee_exited=int((delta.neutral_nominee&~delta.boundary_nominee).sum()),
+                 B_changed=int(delta.neutral_B.ne(delta.boundary_B).sum()),S_changed_gt_1e_12=int(delta.neutral_S.sub(delta.boundary_S).abs().gt(1e-12).sum()),
+                 neutral_B4=int(delta.neutral_B4.sum()),boundary_B4=int(delta.boundary_B4.sum()),
+                 B4_entered=int((~delta.neutral_B4&delta.boundary_B4).sum()),B4_exited=int((delta.neutral_B4&~delta.boundary_B4).sum()))
+    summary['S_changed_in_retained_nominees']=int((delta.neutral_nominee&delta.boundary_nominee&delta.neutral_S.sub(delta.boundary_S).abs().gt(1e-12)).sum())
+    f=new[['gene_symbol','seed_gene','liver_nomination_flag','n_liver_traits_supported','n_domains_supported']].copy()
+    f['B']=f.n_liver_traits_supported;f['S']=delta.boundary_S
+    for path,cols in [(features.GENE_LENGTH,['gene','gene_length_bp']),(features.CIS_SNP_COUNT,['gene','nsnps_cis']),
+                      (features.EXPRESSION,['gene_symbol','HCCDB18_adjacent_median']),(features.LD_BLOCK,['gene','EUR_ld_block'])]:
+        s=pd.read_csv(path,sep='\t',usecols=cols).rename(columns={'gene':'gene_symbol'})
+        f=f.merge(s,on='gene_symbol',how='left',validate='one_to_one')
+    f=f.loc[f.liver_nomination_flag&~f.seed_gene].copy()
+    f['S_quintile']=pd.qcut(f.S,5,labels=[1,2,3,4,5]).astype(int)
+    f['complete_X']=f.gene_length_bp.gt(0)&f.nsnps_cis.ge(0)&f.HCCDB18_adjacent_median.ge(0)
+    f['B_category']=f.B.map(lambda b:str(b) if b<4 else '4+')
+    grid=[]
+    for scope,part in [('all_nominees',f),('complete_liver_X',f[f.complete_X])]:
+        for q in range(1,6):
+            for b in ['1','2','3','4+']:
+                g=part[(part.S_quintile==q)&(part.B_category==b)]
+                grid.append(dict(scope=scope,S_quintile=q,B_category=b,n_genes=len(g),n_EUR_blocks=g.EUR_ld_block.nunique(),S_min=g.S.min(),S_max=g.S.max()))
+    write(new,'boundary_liver_gene_registry.tsv');write(delta,'B_S_comparison.tsv');write(f,'boundary_liver_feature_registry.tsv')
+    write(delta.loc[delta.changed_support_traits.ne('')],'support_membership_changes.tsv')
+    write(pd.DataFrame(rows),'trait_support_comparison.tsv');write(pd.DataFrame(size),'gene_size_diagnostic.tsv')
+    write(pd.DataFrame([summary]),'universe_summary.tsv');write(pd.DataFrame(grid),'liver_only_support_grid.tsv')
+    write(pd.crosstab(delta.neutral_B,delta.boundary_B).reset_index(),'B_transition_matrix.tsv')
+    assert len(new)==18321 and new.gene_symbol.is_unique and new.seed_gene.equals(old.seed_gene)
+    assert new.seed_gene.sum()==56
+    checks.extend([dict(trait='ALL',check='gene_universe_and_seed_identity',passed=True,n_checks=3),
+                   dict(trait='ALL',check='no_HCC_or_model_calls_in_analysis',passed=True,n_checks=1)])
+    write(pd.DataFrame(checks),'validation.tsv')
+    write(pd.DataFrame([dict(d=d,P1_replacement=1-1/d if d>1 else 1,
+                            one_boundary_weighted_contribution=0 if d==2 else (-1/math.tan(math.pi/d)/d if d>1 else np.nan)) for d in [1,2,10,100,1000,10000]]),'boundary_weight_diagnostic.tsv')
+    (OUT/'run_manifest.json').write_text(json.dumps(dict(status='sensitivity_only',summary=summary,HCC_loaded=False,
+         primary_replaced=False,models_run=False,script_sha256=prior.sha(Path(__file__)),
+         charter_sha256=prior.sha(OUT/'charter.md')),indent=2)+'\n')
+    print(json.dumps(summary,indent=2))
+
+if __name__=='__main__':main()

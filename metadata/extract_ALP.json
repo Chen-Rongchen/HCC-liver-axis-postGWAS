@@ -1,0 +1,19 @@
+{
+  "trait": "ALP",
+  "path": "data/reference/gwas/grch37_primary/GCST90013406_buildGRCh37.tsv",
+  "sha256": "1fa9825433eef4de11a18d17ab76ca55c00523ea5efadcd67a998ff869a8e619",
+  "counts": {
+    "raw_rows": 16979038,
+    "target_valid_rows": 74888
+  },
+  "coordinate_keys": 74830,
+  "actual_variant_keys": 74830,
+  "allele_status_counts": {
+    "exact_unordered_pair": 74701,
+    "literal_pair_mismatch_or_missing": 128,
+    "ambiguous_minimum_P_alleles": 1
+  },
+  "replay_genes": 188,
+  "all_replays_passed": true,
+  "script_sha256": "2509d70ad8b5ad453c89c701566b138905ab55e3a4e6d017029f1e173b9731d5"
+}

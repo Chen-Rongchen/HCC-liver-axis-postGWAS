@@ -1,0 +1,133 @@
+"""Rebuild the current candidate/context ledger without new association discovery."""
+from run import *
+import re, concurrent.futures
+OLD=BASE/'21_candidate_gene_audit'
+
+def build():
+    f=read(OUT/'boundary_analysis_source.tsv');g=read(BASE/'25_p1_boundary_sensitivity/boundary_liver_gene_registry.tsv').set_index('gene_symbol')
+    selected=f.loc[~f.seed_gene&f.B.ge(4)&f.EUR_fraction.le(.05)].copy()
+    selected['supported_traits']=selected.gene_symbol.map(lambda n:';'.join(c for c in TRAITS if g.loc[n,c+'_support']))
+    old=read(OLD/'candidate_feasibility_198.tsv')
+    selected['present_in_prior_198']=selected.gene_symbol.isin(old.gene_symbol)
+    selected['selection']='post_result_B_ge4_EUR_top5_mapping_context_not_gene_discovery'
+    write(selected,'candidate_universe.tsv')
+    hg=pd.read_csv(OLD/'public_sources/hgnc_complete_set.tsv',sep='\t',dtype=str).fillna('')
+    alias={};ident=[]
+    for name in selected.gene_symbol:
+        ensg=g.loc[name,'ensg'];match=hg[hg.ensembl_gene_id.eq(ensg)]
+        if match.empty:match=hg[hg.symbol.eq(name)]
+        terms={name};approved=''
+        if len(match)==1:
+            r=match.iloc[0];approved=r.symbol;terms.update([r.symbol]+r.alias_symbol.split('|')+r.prev_symbol.split('|'))
+        terms.discard('');alias[name]=sorted(terms)
+        ident.append(dict(gene_symbol=name,ensg=ensg,approved_symbol=approved,aliases=';'.join(sorted(terms)),hgnc_match_count=len(match)))
+    write(pd.DataFrame(ident),'gene_identifiers.tsv');(OUT/'aliases.json').write_text(json.dumps(alias,indent=2)+'\n')
+    # Reuse the source-wide Catalog parser with an independent output target.
+    parser=load(OLD/'code/parse_catalog.py','final_catalog_parser')
+    payload=json.loads((OLD/'public_sources/gwas_catalog_hcc_associations.json').read_text())
+    check('Catalog_snapshot_complete_page','next' not in payload.get('_links',{}))
+    matches=[]
+    for a in payload['_embedded']['associations']:
+        study=a['study'];pub=study.get('publicationInfo',{});trait=study.get('diseaseTrait',{}).get('trait','')
+        author=set(v['geneName'] for locus in a.get('loci',[]) for v in locus.get('authorReportedGenes',[]))
+        mapped=set(v['gene']['geneName'] for snp in a.get('snps',[]) for v in snp.get('genomicContexts',[]))
+        for name,terms in alias.items():
+            ar=set(terms)&author;ma=set(terms)&mapped
+            if ar or ma:matches.append(dict(gene_symbol=name,accession=study['accessionId'],pmid=pub.get('pubmedId',''),trait=trait,author_match=';'.join(sorted(ar)),mapped_match=';'.join(sorted(ma)),level='reported_locus_annotation' if ar else 'proximity_mapping',url=a['_links']['self']['href']))
+    write(pd.DataFrame(matches),'catalog_current_candidate_matches.tsv')
+    pub=[]
+    specs={'SupTab3':(1,'Annotation','previous_HCC_locus_annotation'),'SupTab4':(0,'Gene','reported_locus_label'),'SupTab7':(0,'Gene','finemapped_variant_annotation'),'SupTab8':(0,'genes','gene_set_membership'),'SupTab9':(0,'Gene','TWAS'),'SupTab10':(0,'Gene','RWAS')}
+    for table,(header,col,category) in specs.items():
+        d=read(OLD/f'publication_{table}.tsv')
+        for i,r in d.iterrows():
+            tokens=set(re.split(r'[\s:;,/_]+',str(r[col])))
+            for name,terms in alias.items():
+                found=tokens&set(terms)
+                if found:pub.append(dict(gene_symbol=name,source_table=table,source_excel_row=i+header+2,match_terms=';'.join(sorted(found)),category=category,doi='10.1016/j.xhgg.2026.100639',source_independence='same_HCC_source_not_independent'))
+    write(pd.DataFrame(pub),'publication_current_candidate_matches.tsv')
+    write(old.loc[~old.gene_symbol.isin(selected.gene_symbol)],'prior_candidates_not_retained.tsv')
+    print('current',len(selected),'entered',(~selected.present_in_prior_198).sum(),'exited',(~old.gene_symbol.isin(selected.gene_symbol)).sum(),flush=True)
+
+def attribute():
+    selected=read(OUT/'candidate_universe.tsv');engine=load(ROOT/'analysis_update_2026_hcc_gwas/code/compute_primary_gene_level_acat.py','candidate_engine')
+    scoring=load(BASE/'25_p1_boundary_sensitivity/run_traits.py','candidate_boundary')
+    registry=read(engine.MAP/'gene_registry.tsv').set_index('gene');indices={int(registry.loc[n,'gene_index']):n for n in selected.gene_symbol};parts={n:[] for n in selected.gene_symbol}
+    for chrom in range(1,23):
+        prefix=f'chr{chrom:02d}';gi=np.load(engine.MAP/f'{prefix}_gene_index.npy',mmap_mode='r')
+        vi=np.load(engine.MAP/f'{prefix}_variant_index.npy',mmap_mode='r');pos=np.load(engine.MAP/f'{prefix}_positions.npy',mmap_mode='r')
+        keys=np.load(engine.MAP/f'{prefix}_variant_keys.npy',mmap_mode='r');p=np.load(engine.ADAPTED/'GCST90860790'/f'{prefix}_p.npy',mmap_mode='r')
+        chosen=np.flatnonzero(np.isin(gi,list(indices)));idx=gi[chosen]
+        for gid in np.unique(idx):
+            mapped=np.asarray(vi[chosen[idx==gid]]);v=np.asarray(p[mapped]);valid=np.isfinite(v);mapped=mapped[valid];v=v[valid]
+            parts[indices[int(gid)]].append((chrom,np.asarray(keys[mapped],dtype=np.uint64),np.asarray(pos[mapped]),v))
+    hcc=read(OUT/'EUR_hcc_rank_scores.tsv').set_index('gene_symbol');lead=read(ROOT/'analysis_update_2026_hcc_gwas/08_old_new_comparison/fifteen_locus_audit.tsv')
+    rows=[];top=[]
+    for name,group in parts.items():
+        vals=np.concatenate([v for ch,k,pos,v in group]);minimum=vals.min();mins=[];key_strings=[];labels=set();allvars=[]
+        for ch,keys,pos,v in group:
+            key_strings.extend(f'{ch}:{int(k)}' for k in keys)
+            mins.extend(f'{ch}:{int(p)}' for p in pos[v==minimum])
+            labels.update(lead.loc[lead.chromosome.eq(ch)&lead.position_grch37.isin(pos),'reported_locus_label'].dropna())
+            allvars.extend((int(ch),int(a),float(b)) for a,b in zip(pos,v))
+        keys_sorted=sorted(key_strings);uniq=sorted(set(keys_sorted));score=scoring.boundary(vals)
+        check(name+'_candidate_score_replay',np.isclose(score,hcc.loc[name,'boundary_score'],rtol=1e-12,atol=0))
+        rows.append(dict(gene_symbol=name,n_mapping_records=len(vals),n_unique_variants=len(uniq),n_duplicate_records=len(vals)-len(uniq),
+            full_input_multiset_sha256=hashlib.sha256('\n'.join(keys_sorted).encode()).hexdigest(),
+            variant_set_sha256=hashlib.sha256('\n'.join(uniq).encode()).hexdigest(),min_variant_p=minimum,minimum_variant_grch37=';'.join(sorted(set(mins))),
+            mapped_reported_lead_labels=';'.join(sorted(labels)),boundary_score=score,n_variants_P_lt_5e8=int((vals<5e-8).sum())))
+        for rank,(ch,p,v) in enumerate(sorted(allvars,key=lambda x:x[2])[:10],1):top.append(dict(gene_symbol=name,rank=rank,chromosome=ch,position_grch37=p,variant_p=v))
+    d=pd.DataFrame(rows);d['genes_sharing_minimum_variant_set']=d.groupby('minimum_variant_grch37').gene_symbol.transform('size');d['genes_with_identical_full_inputs']=d.groupby('full_input_multiset_sha256').gene_symbol.transform('size')
+    write(d,'candidate_variant_attribution.tsv');write(pd.DataFrame(top),'candidate_top_variant_inputs.tsv')
+    write(d.groupby('minimum_variant_grch37').agg(n_genes=('gene_symbol','size'),genes=('gene_symbol',lambda s:';'.join(sorted(s)))).reset_index().sort_values('n_genes',ascending=False),'candidate_strongest_variant_groups.tsv')
+    write(pd.DataFrame(CHECKS),'candidate_validation.tsv')
+
+def literature():
+    fetch=load(OLD/'code/fetch_literature.py','final_literature_fetch');aliases=json.loads((OUT/'aliases.json').read_text())
+    cached=[];fresh=[]
+    old_aliases=json.loads((OLD/'aliases.json').read_text())
+    for name,terms in aliases.items():
+        if name in old_aliases and terms==old_aliases[name] and (OLD/f'public_sources/europepmc/{name}.json').exists():cached.append((name,terms))
+        else:fresh.append((name,terms))
+    rows=[];hits=[]
+    for label,items,public in [('retained_stage21_snapshot',cached,OLD/'public_sources/europepmc'),('new_current_query',fresh,OUT/'literature_cache')]:
+        public.mkdir(exist_ok=True);fetch.PUBLIC=public;fetch.OUT=ROOT
+        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
+            for row,records in pool.map(fetch.one,items):
+                row['audit_scope']=label;rows.append(row);hits.extend(records)
+                if label=='new_current_query':print(row['gene_symbol'],row['status'],row['hit_count'],flush=True)
+    write(pd.DataFrame(rows),'candidate_literature_search.tsv');write(pd.DataFrame(hits),'candidate_literature_hits.tsv')
+
+def ledger():
+    d=read(OUT/'candidate_universe.tsv');a=read(OUT/'candidate_variant_attribution.tsv');d=d.merge(a,on='gene_symbol',validate='one_to_one')
+    search=read(OUT/'candidate_literature_search.tsv');hits=read(OUT/'candidate_literature_hits.tsv');pub=read(OUT/'publication_current_candidate_matches.tsv');cat=read(OUT/'catalog_current_candidate_matches.tsv')
+    manual=pd.concat([read(OLD/'manually_reviewed_evidence.tsv'),read(OUT/'new_entry_manual_evidence.tsv')],ignore_index=True)
+    def joined(frame,col):return frame.groupby('gene_symbol')[col].agg(lambda s:';'.join(sorted(set(str(v) for v in s.dropna()))))
+    d['publication_categories']=d.gene_symbol.map(joined(pub,'category')).fillna('')
+    d['catalog_levels']=d.gene_symbol.map(joined(cat,'level')).fillna('')
+    d['literature_pmids']=d.gene_symbol.map(joined(hits,'pmid')).fillna('')
+    d['manual_review_category']=d.gene_symbol.map(joined(manual,'review_category')).fillna('not_manually_adjudicated')
+    d['manual_interpretation']=d.gene_symbol.map(joined(manual,'interpretation')).fillna('')
+    d=d.merge(search[['gene_symbol','status','hit_count','retrieved','truncated','audit_scope']],on='gene_symbol',validate='one_to_one')
+    if (OUT/'exact_symbol_literature_search.tsv').exists():
+        exact=read(OUT/'exact_symbol_literature_search.tsv')[['gene_symbol','status','hit_count','truncated']].rename(columns={c:'exact_symbol_'+c for c in ['status','hit_count','truncated']})
+        d=d.merge(exact,on='gene_symbol',how='left',validate='one_to_one')
+    d['new_HCC_susceptibility_gene_established']=False
+    d['evidence_scope']='mapped_HCC_rank_association; no_new_independent_gene_specific_test'
+    d['novelty_status']='not_established; no_hit_does_not_establish_novelty'
+    write(d,'candidate_evidence_ledger.tsv')
+    write(d.groupby('EUR_ld_block').agg(n_genes=('gene_symbol','size'),genes=('gene_symbol',lambda x:';'.join(sorted(x)))).reset_index().sort_values('n_genes',ascending=False),'candidate_block_concentration.tsv')
+    print(json.dumps(dict(candidates=len(d),blocks=d.EUR_ld_block.nunique(),strongest_variant_sets=d.minimum_variant_grch37.nunique(),new_gene_established=0,new_entries=int((~d.present_in_prior_198).sum()),failed_queries=int(d.status.ne('ok').sum()))),flush=True)
+
+def disambiguate():
+    """One exact-approved-symbol screen for new-entry alias queries with hits."""
+    s=read(OUT/'candidate_literature_search.tsv');names=s.loc[s.audit_scope.eq('new_current_query')&s.hit_count.gt(0),'gene_symbol']
+    identifiers=read(OUT/'gene_identifiers.tsv').set_index('gene_symbol');fetch=load(OLD/'code/fetch_literature.py','final_exact_fetch')
+    fetch.PUBLIC=OUT/'exact_symbol_cache';fetch.PUBLIC.mkdir(exist_ok=True);fetch.OUT=ROOT
+    items=[(n,[identifiers.loc[n,'approved_symbol'] if pd.notna(identifiers.loc[n,'approved_symbol']) else n]) for n in names]
+    rows=[];hits=[]
+    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
+        for row,records in pool.map(fetch.one,items):rows.append(row);hits.extend(records);print(row['gene_symbol'],row['status'],row['hit_count'],flush=True)
+    write(pd.DataFrame(rows),'exact_symbol_literature_search.tsv');write(pd.DataFrame(hits),'exact_symbol_literature_hits.tsv')
+
+if __name__=='__main__':
+    p=argparse.ArgumentParser();p.add_argument('stage',choices=['build','attribute','literature','disambiguate','ledger']);args=p.parse_args();globals()[args.stage]()

@@ -1,0 +1,74 @@
+import sys, math, json, argparse
+from pathlib import Path
+import numpy as np
+import pandas as pd
+import mpmath as mp
+
+OUT=Path(__file__).resolve().parent
+BASE=OUT.parent
+sys.path.insert(0,str(BASE/'23_liver_acat_audit/code'))
+import recompute_traits as prior
+prior.OUT=OUT
+neutral=prior.stable_acat
+samples=[]
+
+def boundary(p):
+    p=np.asarray(p,dtype=float)
+    p=p[np.isfinite(p)&(p>=0)&(p<=1)]
+    d=len(p)
+    if not d:return np.nan
+    p=np.clip(p,1e-300,1)
+    if d==1:return float(p[0])
+    t=np.zeros(d)
+    lo=p<.5; hi=(p>.5)&(p<1)
+    t[lo]=1/np.tan(np.pi*p[lo])
+    t[hi]=-1/np.tan(np.pi*(1-p[hi]))
+    t[p==1]=0 if d==2 else -1/math.tan(math.pi/d)
+    return max(math.atan2(1,math.fsum((t/d).tolist()))/math.pi,1e-300)
+
+def reference(p):
+    with mp.workdps(400):
+        v=[max(mp.mpf(float(x)),mp.mpf(1e-300)) for x in p]
+        d=len(v)
+        if d==1:return float(v[0])
+        v=[1-mp.mpf(1)/d if x==1 else x for x in v]
+        return max(float(mp.atan2(1,mp.fsum(mp.cot(mp.pi*x) for x in v)/d)/mp.pi),1e-300)
+
+def audited_boundary(p):
+    result=boundary(p)
+    if np.any(p==1) and len(samples)<3:
+        ref=reference(p)
+        samples.append(dict(d=len(p),n_P1=int((p==1).sum()),computed=result,reference=ref,
+                            passed=math.isclose(result,ref,rel_tol=1e-10,abs_tol=1e-15)))
+        assert samples[-1]['passed']
+    return result
+
+def main():
+    parser=argparse.ArgumentParser();parser.add_argument('traits',nargs='+',choices=prior.TRAITS)
+    args=parser.parse_args()
+    tests=[]
+    for p in ([1.],[1.,1.],[1.,1.,1.],[1.,.001,.9],[1.,1e-300,.9],[.5,.5],[0.,1.,.2],[1.,np.nextafter(1.,0.),.01]):
+        a=boundary(p);b=reference(p)
+        tests.append(dict(inputs=str(p),computed=a,reference=b,passed=math.isclose(a,b,rel_tol=1e-10,abs_tol=1e-15)))
+    assert all(x['passed'] for x in tests)
+    prior.stable_acat=audited_boundary
+    for trait in args.traits:
+        samples.clear()
+        prior.run(trait)
+        path=OUT/f'{trait}_gene_acat.tsv'
+        x=pd.read_csv(path,sep='\t',float_precision='round_trip').rename(columns={'stable_p':'boundary_p'})
+        x=x.drop(columns=['mathematical_P1_boundary_p'])
+        old=pd.read_csv(BASE/f'23_liver_acat_audit/{trait}_gene_acat.tsv',sep='\t',float_precision='round_trip')
+        x=x.merge(old[['gene','stable_p']],on='gene',validate='one_to_one').rename(columns={'stable_p':'neutral_p'})
+        unchanged=x.n_input_one.eq(0)
+        assert np.allclose(x.loc[unchanged,'boundary_p'],x.loc[unchanged,'neutral_p'],equal_nan=True,rtol=1e-12,atol=0)
+        assert np.array_equal(x.boundary_p.notna(),x.neutral_p.notna())
+        prior.write(x,f'{trait}_gene_acat.tsv')
+        prior.write(pd.DataFrame(tests),f'{trait}_synthetic_validation.tsv')
+        prior.write(pd.DataFrame(samples,columns=['d','n_P1','computed','reference','passed']),f'{trait}_real_validation.tsv')
+        mpath=OUT/f'{trait}_manifest.json';m=json.loads(mpath.read_text())
+        m.update(method='exact_P1_to_1_minus_1_over_d_sensitivity',primary_replaced=False,HCC_loaded=False,
+                 driver_sha256=prior.sha(Path(__file__)),charter_sha256=prior.sha(OUT/'charter.md'),nonboundary_unchanged=True)
+        mpath.write_text(json.dumps(m,indent=2)+'\n')
+
+if __name__=='__main__':main()

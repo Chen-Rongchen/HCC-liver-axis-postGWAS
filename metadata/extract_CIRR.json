@@ -1,0 +1,18 @@
+{
+  "trait": "CIRR",
+  "path": "data/reference/gwas/grch37_primary/GCST90319877.tsv",
+  "sha256": "e5f942fa4e5e016b2a39898891529567ca6cc32e40ace3fe9ff272ed58e9b9c8",
+  "counts": {
+    "raw_rows": 15393160,
+    "target_valid_rows": 74576
+  },
+  "coordinate_keys": 74531,
+  "actual_variant_keys": 74531,
+  "allele_status_counts": {
+    "exact_unordered_pair": 74415,
+    "literal_pair_mismatch_or_missing": 116
+  },
+  "replay_genes": 283,
+  "all_replays_passed": true,
+  "script_sha256": "4217c683884c131c382b6bced1cc2792ce968eafa9ba8b240974a0e03cbfff0d"
+}

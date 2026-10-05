@@ -1,0 +1,662 @@
+#!/usr/bin/env python3
+"""Build the non-HCC-QC-amended 11-trait nomination object.
+
+The original nine-trait matrix is preserved as a prespecified sensitivity.
+PSC and AIH enter the amended primary only after the eligibility decision in
+config/nomination_panel_eligibility_decision.tsv was frozen. The HCC columns
+already present in the original matrix are attached only after this eligibility
+check and never participate in liver-trait nomination. Historical outcome
+exposure is documented in the dated protocol amendment.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import math
+import os
+from datetime import datetime, timezone
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+from scipy import stats
+from scipy.stats import fisher_exact
+
+
+ROOT = Path(
+    os.environ.get("COMORBIDITY_PROJECT_ROOT", Path(__file__).resolve().parents[2])
+).resolve()
+BASE = (
+    ROOT
+    / "result/08_evidence_completion/acat_native_grch37_primary"
+    / "gene_trait_acat_matrix_9trait.tsv"
+)
+ELIGIBILITY_DIR = ROOT / "result/17_trait_eligibility"
+DECISION = ROOT / "config/nomination_panel_eligibility_decision.tsv"
+AMENDMENT = ROOT / "config/nomination_panel_protocol_amendment_2026-07-26.md"
+SEED_REGISTRY = ROOT / "config/seed57_provenance_registry.tsv"
+SEED_EXCEPTIONS = ROOT / "config/prior_reference_quarantine_exceptions.tsv"
+OUT = ROOT / "result/18_amended_11trait_primary"
+
+GROUPS = {
+    "G1": ["CIRR", "LIVER_FAT", "NAFLD"],
+    "G2": ["ALT", "AST", "GGT"],
+    "G3": ["ALP", "BILI", "PBC", "PSC", "AIH"],
+}
+ORIGINAL_GROUPS = {
+    "G1": ["CIRR", "LIVER_FAT", "NAFLD"],
+    "G2": ["ALT", "AST", "GGT"],
+    "G3": ["ALP", "BILI", "PBC"],
+}
+LIVER = sum(GROUPS.values(), [])
+ORIGINAL_LIVER = sum(ORIGINAL_GROUPS.values(), [])
+HCC = ["HCC_EUR", "HCC_BBJ"]
+
+
+def sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(8 * 1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def acat_rows(values: np.ndarray) -> np.ndarray:
+    values = np.asarray(values, dtype=float)
+    valid = np.isfinite(values)
+    clipped = np.clip(values, 1e-300, 1 - 1e-15)
+    transformed = np.full_like(clipped, np.nan)
+    small = valid & (clipped < 1e-15)
+    large = valid & (clipped > 1 - 1e-15)
+    middle = valid & ~(small | large)
+    transformed[small] = 1 / (np.pi * clipped[small])
+    transformed[large] = -1 / (np.pi * (1 - clipped[large]))
+    transformed[middle] = np.tan((0.5 - clipped[middle]) * np.pi)
+    statistic = np.nanmean(transformed, axis=1)
+    combined = 0.5 - np.arctan(statistic) / np.pi
+    extreme = statistic > 1e15
+    combined[extreme] = 1 / (np.pi * statistic[extreme])
+    all_missing = ~valid.any(axis=1)
+    combined[all_missing] = np.nan
+    return np.clip(combined, 1e-300, 1.0)
+
+
+def bh(values: pd.Series) -> np.ndarray:
+    p = pd.to_numeric(values, errors="coerce").to_numpy(float)
+    finite = np.isfinite(p)
+    output = np.full_like(p, np.nan)
+    ranked = p[finite]
+    order = np.argsort(ranked)
+    sorted_p = ranked[order]
+    adjusted = np.minimum.accumulate(
+        (sorted_p * len(sorted_p) / np.arange(1, len(sorted_p) + 1))[::-1]
+    )[::-1]
+    restored = np.empty_like(adjusted)
+    restored[order] = np.clip(adjusted, 0, 1)
+    output[finite] = restored
+    return output
+
+
+def rank_percentile(values: pd.Series) -> pd.Series:
+    numeric = pd.to_numeric(values, errors="coerce")
+    valid = numeric.notna() & np.isfinite(numeric) & numeric.gt(0) & numeric.le(1)
+    output = pd.Series(1.0, index=values.index, dtype=float)
+    output.loc[valid] = numeric.loc[valid].rank(method="average") / valid.sum()
+    return output
+
+
+def require_frozen_eligibility() -> dict:
+    summary_path = ELIGIBILITY_DIR / "eligibility_summary.json"
+    summary = json.loads(summary_path.read_text())
+    if set(summary.get("eligible_traits", [])) != {"PSC", "AIH"}:
+        raise RuntimeError("PSC and AIH are not both frozen as eligible.")
+    gates = pd.read_csv(
+        ELIGIBILITY_DIR / "psc_aih_eligibility_gates.tsv", sep="\t"
+    )
+    if (
+        set(gates["trait"]) != {"PSC", "AIH"}
+        or not gates["passed"].astype(bool).all()
+        or not gates["blocking"].astype(bool).all()
+    ):
+        raise RuntimeError("Eligibility gate table is incomplete or contains failures.")
+    decision = pd.read_csv(DECISION, sep="\t")
+    selected = decision.loc[
+        decision["amended_11trait_primary"].astype(str).str.upper().eq("TRUE"),
+        "trait",
+    ].tolist()
+    if selected != LIVER:
+        raise RuntimeError(
+            f"Frozen eligibility decision order differs from amended panel: {selected}"
+        )
+    return summary
+
+
+def load_seed_genes() -> set[str]:
+    seeds = pd.read_csv(SEED_REGISTRY, sep="\t")
+    exceptions = pd.read_csv(SEED_EXCEPTIONS, sep="\t")
+    if len(seeds) != 57:
+        raise RuntimeError(f"Expected 57 prior-reference records; observed {len(seeds)}.")
+    exception_genes = set(
+        exceptions.loc[
+            exceptions["seed_gene_for_quarantine"]
+            .astype(str)
+            .str.strip()
+            .str.lower()
+            .isin({"false", "0", "no"}),
+            "gene_symbol",
+        ].astype(str)
+    )
+    if exception_genes != {"MTARC1"}:
+        raise RuntimeError(f"Unexpected quarantine exceptions: {exception_genes}")
+    result = set(seeds["gene_symbol"].dropna().astype(str)) - exception_genes
+    if len(result) != 56:
+        raise RuntimeError(
+            f"Expected 56 quarantined genes; observed {len(result)}."
+        )
+    return result
+
+
+def append_candidate(
+    frame: pd.DataFrame, trait: str, path: Path
+) -> pd.DataFrame:
+    candidate = pd.read_csv(path, sep="\t")
+    if candidate["gene"].duplicated().any():
+        raise RuntimeError(f"{trait} eligibility cache contains duplicate genes.")
+    candidate = candidate.rename(
+        columns={
+            "nsnps_matched": f"{trait}_nsnps",
+            "acat_p": f"{trait}_acat_p",
+            "min_p": f"{trait}_min_p",
+        }
+    )[["gene", f"{trait}_nsnps", f"{trait}_acat_p", f"{trait}_min_p"]]
+    return frame.merge(candidate, on="gene", how="left", validate="one_to_one")
+
+
+def attach_ranks(frame: pd.DataFrame) -> pd.DataFrame:
+    for trait in LIVER + HCC:
+        frame[f"{trait}_rank_pct"] = rank_percentile(frame[f"{trait}_acat_p"])
+    return frame
+
+
+def define_membership(
+    frame: pd.DataFrame,
+    groups: dict[str, list[str]],
+    prefix: str,
+    liver_cut: float = 0.05,
+) -> pd.DataFrame:
+    traits = sum(groups.values(), [])
+    for trait in traits:
+        frame[f"{prefix}{trait}_support"] = (
+            frame[f"{trait}_rank_pct"] <= liver_cut
+        )
+    group_columns = []
+    for group, traits_in_group in groups.items():
+        column = f"{prefix}{group}_support"
+        frame[column] = frame[
+            [f"{prefix}{trait}_support" for trait in traits_in_group]
+        ].any(axis=1)
+        group_columns.append(column)
+    trait_columns = [f"{prefix}{trait}_support" for trait in traits]
+    frame[f"{prefix}n_liver_traits_supported"] = frame[trait_columns].sum(axis=1)
+    frame[f"{prefix}n_domains_supported"] = frame[group_columns].sum(axis=1)
+    frame[f"{prefix}liver_nomination_flag"] = frame[trait_columns].any(axis=1)
+    tier = pd.Series("none", index=frame.index, dtype=object)
+    tier.loc[
+        frame[f"{prefix}liver_nomination_flag"]
+        & frame[f"{prefix}n_domains_supported"].ge(2)
+    ] = "N1"
+    tier.loc[
+        frame[f"{prefix}liver_nomination_flag"]
+        & frame[f"{prefix}n_domains_supported"].eq(1)
+        & frame[f"{prefix}n_liver_traits_supported"].ge(2)
+    ] = "N2"
+    tier.loc[
+        frame[f"{prefix}liver_nomination_flag"]
+        & frame[f"{prefix}n_liver_traits_supported"].eq(1)
+    ] = "N3"
+    frame[f"{prefix}N_tier"] = tier
+    return frame
+
+
+def panel_summary(
+    frame: pd.DataFrame,
+    label: str,
+    groups: dict[str, list[str]],
+) -> dict:
+    prefix = f"{label}_"
+    temporary = frame.copy()
+    temporary = define_membership(temporary, groups, prefix)
+    nonseed = ~temporary["seed_gene"]
+    nominated = temporary[f"{prefix}liver_nomination_flag"] & nonseed
+    aligned = temporary["HCC_alignment_strict"]
+    return {
+        "analysis": label,
+        "n_traits": len(sum(groups.values(), [])),
+        "G1_traits": len(groups["G1"]),
+        "G2_traits": len(groups["G2"]),
+        "G3_traits": len(groups["G3"]),
+        "nonseed_nominated": int(nominated.sum()),
+        "strict_aligned_nonseed_nominated": int((nominated & aligned).sum()),
+        "N1_nonseed": int((nonseed & temporary[f"{prefix}N_tier"].eq("N1")).sum()),
+        "N2_nonseed": int((nonseed & temporary[f"{prefix}N_tier"].eq("N2")).sum()),
+        "N3_nonseed": int((nonseed & temporary[f"{prefix}N_tier"].eq("N3")).sum()),
+    }
+
+
+def threshold_sensitivity(frame: pd.DataFrame) -> pd.DataFrame:
+    rows = []
+    nonseed = ~frame["seed_gene"]
+    for liver_cut in [0.01, 0.025, 0.05, 0.075, 0.10, 0.15, 0.20, 0.25]:
+        trait_support = pd.DataFrame(
+            {
+                trait: frame[f"{trait}_rank_pct"].le(liver_cut)
+                for trait in LIVER
+            }
+        )
+        domain_support = pd.DataFrame(
+            {
+                group: trait_support[traits].any(axis=1)
+                for group, traits in GROUPS.items()
+            }
+        )
+        nomination = trait_support.any(axis=1) & nonseed
+        cross_domain = domain_support.sum(axis=1).ge(2)
+        for hcc_cut in [0.01, 0.025, 0.05, 0.075, 0.10, 0.125, 0.15, 0.175, 0.20]:
+            aligned = frame[[f"{trait}_rank_pct" for trait in HCC]].le(
+                hcc_cut
+            ).any(axis=1)
+            a = int((nomination & cross_domain & aligned).sum())
+            b = int((nomination & cross_domain & ~aligned).sum())
+            c = int((nomination & ~cross_domain & aligned).sum())
+            d = int((nomination & ~cross_domain & ~aligned).sum())
+            odds, p_value = (
+                fisher_exact([[a, b], [c, d]])
+                if min(a + b, c + d) > 0
+                else (math.nan, math.nan)
+            )
+            rows.append(
+                {
+                    "liver_rank_cut": liver_cut,
+                    "HCC_rank_cut": hcc_cut,
+                    "n_nomination": int(nomination.sum()),
+                    "n_aligned": int((nomination & aligned).sum()),
+                    "cross_domain_aligned": a,
+                    "single_domain_aligned": c,
+                    "odds_ratio": odds,
+                    "fisher_P": p_value,
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+def domain_pair_threshold_registry(frame: pd.DataFrame) -> pd.DataFrame:
+    categories = [
+        (
+            "joint_G1_and_G2_supported_no_G3",
+            lambda g1, g2, g3: g1 & g2 & ~g3,
+        ),
+        (
+            "joint_G1_and_G3_supported_no_G2",
+            lambda g1, g2, g3: g1 & ~g2 & g3,
+        ),
+        (
+            "joint_G2_and_G3_supported_no_G1",
+            lambda g1, g2, g3: ~g1 & g2 & g3,
+        ),
+        ("all_three_axes_supported", lambda g1, g2, g3: g1 & g2 & g3),
+        ("joint_G1_and_G2_supported", lambda g1, g2, g3: g1 & g2),
+        (
+            "G3_with_G1_or_G2_supported",
+            lambda g1, g2, g3: g3 & (g1 | g2),
+        ),
+        (
+            "single_axis_supported",
+            lambda g1, g2, g3: (
+                (g1 | g2 | g3)
+                & ~(g1 & g2)
+                & ~(g1 & g3)
+                & ~(g2 & g3)
+            ),
+        ),
+        ("no_liver_axis_support", lambda g1, g2, g3: ~g1 & ~g2 & ~g3),
+    ]
+    rows = []
+    nonseed = ~frame["seed_gene"]
+    for liver_cut in [0.025, 0.05, 0.10]:
+        trait_support = {
+            trait: frame[f"{trait}_rank_pct"].le(liver_cut) for trait in LIVER
+        }
+        g1 = pd.concat(
+            [trait_support[trait] for trait in GROUPS["G1"]], axis=1
+        ).any(axis=1)
+        g2 = pd.concat(
+            [trait_support[trait] for trait in GROUPS["G2"]], axis=1
+        ).any(axis=1)
+        g3 = pd.concat(
+            [trait_support[trait] for trait in GROUPS["G3"]], axis=1
+        ).any(axis=1)
+        liver_supported = g1 | g2 | g3
+        trait_count = pd.concat(list(trait_support.values()), axis=1).sum(axis=1)
+        domain_count = (
+            g1.astype(int) + g2.astype(int) + g3.astype(int)
+        )
+        n1 = nonseed & domain_count.ge(2)
+        n2 = nonseed & domain_count.eq(1) & trait_count.ge(2)
+        n3 = nonseed & trait_count.eq(1)
+        for hcc_cut in [0.025, 0.05, 0.10]:
+            eur_top = frame["HCC_EUR_rank_pct"].le(hcc_cut)
+            bbj_top = frame["HCC_BBJ_rank_pct"].le(hcc_cut)
+            aligned = eur_top | bbj_top
+            dual = int((nonseed & liver_supported & eur_top & bbj_top).sum())
+            no_support_eur = frame.loc[
+                nonseed & ~liver_supported, "HCC_EUR_rank_pct"
+            ].dropna()
+            for name, category in categories:
+                mask = category(g1, g2, g3) & nonseed
+                a = int((mask & aligned).sum())
+                b = int((mask & ~aligned).sum())
+                c = int((~mask & nonseed & aligned).sum())
+                d = int((~mask & nonseed & ~aligned).sum())
+                odds, p_value = (
+                    fisher_exact([[a, b], [c, d]], alternative="greater")
+                    if min(a + b, c + d) > 0
+                    else (math.nan, math.nan)
+                )
+                eur = frame.loc[mask, "HCC_EUR_rank_pct"].dropna()
+                bbj = frame.loc[mask, "HCC_BBJ_rank_pct"].dropna()
+                mwu = (
+                    stats.mannwhitneyu(
+                        eur, no_support_eur, alternative="less"
+                    ).pvalue
+                    if len(eur) and len(no_support_eur)
+                    else math.nan
+                )
+                rows.append(
+                    {
+                        "liver_rank_cut": liver_cut,
+                        "HCC_rank_cut": hcc_cut,
+                        "domain_pair": name,
+                        "n_genes": int(mask.sum()),
+                        "n_hcc_strict": a,
+                        "odds_ratio": odds,
+                        "fisher_P": p_value,
+                        "hcc_eur_median_rank": eur.median(),
+                        "hcc_bbj_median_rank": bbj.median(),
+                        "mwu_p": mwu,
+                        "n_N1": int(n1.sum()),
+                        "n_N2": int(n2.sum()),
+                        "n_N3": int(n3.sum()),
+                        "n_trans_ancestry_audit": dual,
+                    }
+                )
+    registry = pd.DataFrame(rows)
+    registry.insert(0, "grid_id", np.arange(1, len(registry) + 1))
+    registry["selected_main_threshold"] = (
+        registry["liver_rank_cut"].eq(0.05)
+        & registry["HCC_rank_cut"].eq(0.05)
+        & registry["domain_pair"].eq("joint_G1_and_G2_supported")
+    )
+    registry["notes"] = np.where(
+        registry["selected_main_threshold"],
+        "predefined primary operating point in the amended eleven-trait panel",
+        "finite-grid robustness setting; not selected post hoc",
+    )
+    return registry
+
+
+def build_group_balanced(frame: pd.DataFrame) -> pd.DataFrame:
+    output = frame[["gene", "seed_gene", "HCC_alignment_strict"]].copy()
+    group_rank_columns = []
+    for group, traits in GROUPS.items():
+        p_values = frame[[f"{trait}_acat_p" for trait in traits]].to_numpy(float)
+        output[f"{group}_within_group_ACAT_P"] = acat_rows(p_values)
+        output[f"{group}_rank_pct"] = rank_percentile(
+            output[f"{group}_within_group_ACAT_P"]
+        )
+        output[f"{group}_top5"] = output[f"{group}_rank_pct"].le(0.05)
+        group_rank_columns.append(f"{group}_top5")
+    output["group_balanced_nomination"] = output[group_rank_columns].any(axis=1)
+    output["hierarchical_ACAT_P"] = acat_rows(
+        output[
+            [f"{group}_within_group_ACAT_P" for group in GROUPS]
+        ].to_numpy(float)
+    )
+    output["hierarchical_ACAT_q"] = bh(output["hierarchical_ACAT_P"])
+    return output
+
+
+def main() -> None:
+    OUT.mkdir(parents=True, exist_ok=True)
+    eligibility = require_frozen_eligibility()
+    frame = pd.read_csv(BASE, sep="\t")
+    if len(frame) != 18321 or frame["gene"].duplicated().any():
+        raise RuntimeError("Base matrix does not define the frozen 18321-gene universe.")
+    frame = append_candidate(
+        frame, "PSC", ELIGIBILITY_DIR / "acat_PSC_eligibility.tsv"
+    )
+    frame = append_candidate(
+        frame, "AIH", ELIGIBILITY_DIR / "acat_AIH_eligibility.tsv"
+    )
+    frame = attach_ranks(frame)
+    frame["seed_gene"] = frame["gene"].isin(load_seed_genes())
+
+    for ancestry in HCC:
+        frame[f"{ancestry}_strict"] = frame[f"{ancestry}_rank_pct"].le(0.05)
+    frame["HCC_alignment_strict"] = frame[
+        [f"{ancestry}_strict" for ancestry in HCC]
+    ].any(axis=1)
+    frame["HCC_alignment_broad"] = frame[
+        [f"{ancestry}_rank_pct" for ancestry in HCC]
+    ].le(0.20).any(axis=1)
+    frame["trans_ancestry_audit_flag"] = frame[
+        [f"{ancestry}_strict" for ancestry in HCC]
+    ].all(axis=1)
+
+    frame = define_membership(frame, GROUPS, "")
+    frame = define_membership(frame, ORIGINAL_GROUPS, "original9_")
+    frame["ACAT_P"] = acat_rows(
+        frame[[f"{trait}_acat_p" for trait in LIVER]].to_numpy(float)
+    )
+    frame["ACAT_q"] = bh(frame["ACAT_P"])
+    frame["original9_ACAT_P"] = acat_rows(
+        frame[[f"{trait}_acat_p" for trait in ORIGINAL_LIVER]].to_numpy(float)
+    )
+
+    matrix_columns = ["gene", "chr", "ensg"]
+    for trait in LIVER + HCC:
+        matrix_columns.extend(
+            [f"{trait}_nsnps", f"{trait}_acat_p", f"{trait}_min_p"]
+        )
+    frame[matrix_columns].to_csv(
+        OUT / "gene_trait_acat_matrix_11trait.tsv", sep="\t", index=False
+    )
+    frame.to_csv(
+        OUT / "gene_evidence_strata_and_hcc_alignment_11trait.tsv",
+        sep="\t",
+        index=False,
+    )
+
+    nonseed = ~frame["seed_gene"]
+    summary = pd.DataFrame(
+        [
+            ("genome_wide_gene_universe", len(frame)),
+            ("prior_reference_registry_genes", 57),
+            ("seed_quarantine_genes", int(frame["seed_gene"].sum())),
+            ("liver_nomination_all", int(frame["liver_nomination_flag"].sum())),
+            (
+                "liver_nomination_nonseed",
+                int((frame["liver_nomination_flag"] & nonseed).sum()),
+            ),
+            ("N1_nonseed", int((frame["N_tier"].eq("N1") & nonseed).sum())),
+            ("N2_nonseed", int((frame["N_tier"].eq("N2") & nonseed).sum())),
+            ("N3_nonseed", int((frame["N_tier"].eq("N3") & nonseed).sum())),
+            (
+                "HCC_broad_aligned_nonseed_nomination",
+                int(
+                    (
+                        frame["liver_nomination_flag"]
+                        & frame["HCC_alignment_broad"]
+                        & nonseed
+                    ).sum()
+                ),
+            ),
+            (
+                "HCC_strict_aligned_nonseed_nomination",
+                int(
+                    (
+                        frame["liver_nomination_flag"]
+                        & frame["HCC_alignment_strict"]
+                        & nonseed
+                    ).sum()
+                ),
+            ),
+            (
+                "trans_ancestry_audit_flags_nonseed_nomination",
+                int(
+                    (
+                        frame["liver_nomination_flag"]
+                        & frame["trans_ancestry_audit_flag"]
+                        & nonseed
+                    ).sum()
+                ),
+            ),
+        ],
+        columns=["denominator", "n"],
+    )
+    summary.to_csv(
+        OUT / "universe_reconciliation_11trait.tsv", sep="\t", index=False
+    )
+    frame[["gene", "ensg", "ACAT_P", "ACAT_q", "original9_ACAT_P"]].to_csv(
+        OUT / "acat_11trait_omnibus.tsv", sep="\t", index=False
+    )
+
+    transition = frame[
+        [
+            "gene",
+            "seed_gene",
+            "original9_liver_nomination_flag",
+            "liver_nomination_flag",
+            "original9_N_tier",
+            "N_tier",
+            "HCC_alignment_strict",
+        ]
+    ].copy()
+    transition["nomination_transition"] = (
+        transition["original9_liver_nomination_flag"].astype(str)
+        + "_to_"
+        + transition["liver_nomination_flag"].astype(str)
+    )
+    transition["tier_transition"] = (
+        transition["original9_N_tier"].astype(str)
+        + "_to_"
+        + transition["N_tier"].astype(str)
+    )
+    transition.to_csv(
+        OUT / "amended_vs_original9_transition.tsv", sep="\t", index=False
+    )
+
+    panels = [panel_summary(frame, "primary11", GROUPS)]
+    panels.append(panel_summary(frame, "original9", ORIGINAL_GROUPS))
+    for omitted in ["PSC", "AIH"]:
+        groups = {group: list(traits) for group, traits in GROUPS.items()}
+        groups["G3"] = [trait for trait in groups["G3"] if trait != omitted]
+        panels.append(panel_summary(frame, f"leave_{omitted}_out", groups))
+    for omitted in LIVER:
+        groups = {
+            group: [trait for trait in traits if trait != omitted]
+            for group, traits in GROUPS.items()
+        }
+        panels.append(panel_summary(frame, f"leave_{omitted}_out", groups))
+    panel_frame = pd.DataFrame(panels).drop_duplicates("analysis")
+    panel_frame.to_csv(
+        OUT / "eligibility_panel_sensitivity_summary.tsv", sep="\t", index=False
+    )
+
+    group_balanced = build_group_balanced(frame)
+    group_balanced.to_csv(
+        OUT / "group_balanced_gene_sensitivity.tsv", sep="\t", index=False
+    )
+    primary_nomination = frame["liver_nomination_flag"] & nonseed
+    balanced_nomination = (
+        group_balanced["group_balanced_nomination"] & nonseed
+    )
+    strict = frame["HCC_alignment_strict"]
+
+    def nomination_summary(name: str, mask: pd.Series) -> dict:
+        a = int((mask & strict).sum())
+        b = int((mask & ~strict).sum())
+        c = int((nonseed & ~mask & strict).sum())
+        d = int((nonseed & ~mask & ~strict).sum())
+        odds_ratio, fisher_p = fisher_exact(
+            [[a, b], [c, d]], alternative="two-sided"
+        )
+        return {
+            "analysis": name,
+            "nonseed_nominated": int(mask.sum()),
+            "strict_aligned": a,
+            "a_exposed_outcome": a,
+            "b_exposed_no_outcome": b,
+            "c_unexposed_outcome": c,
+            "d_unexposed_no_outcome": d,
+            "odds_ratio": float(odds_ratio),
+            "fisher_p_two_sided": float(fisher_p),
+        }
+
+    pd.DataFrame(
+        [
+            nomination_summary(
+                "primary_11trait_top5_union", primary_nomination
+            ),
+            nomination_summary(
+                "three_group_balanced_top5_union_sensitivity",
+                balanced_nomination,
+            ),
+        ]
+    ).to_csv(OUT / "group_balanced_sensitivity_summary.tsv", sep="\t", index=False)
+
+    threshold_sensitivity(frame).to_csv(
+        OUT / "overall_threshold_sensitivity_72_11trait.tsv",
+        sep="\t",
+        index=False,
+    )
+    domain_pair_threshold_registry(frame).to_csv(
+        OUT / "threshold_sensitivity_domain_pairs_72.tsv",
+        sep="\t",
+        index=False,
+    )
+
+    success = {
+        "created_utc": datetime.now(timezone.utc).isoformat(),
+        "analysis_object": "primary_11trait_nomination",
+        "analysis_build": "GRCh37",
+        "gene_universe": 18321,
+        "liver_traits": LIVER,
+        "group_sizes": {group: len(traits) for group, traits in GROUPS.items()},
+        "original_9trait_retained_as_sensitivity": True,
+        "eligibility_outcome_blinding": eligibility["outcome_blinding"],
+        "base_matrix_sha256": sha256(BASE),
+        "PSC_cache_sha256": sha256(
+            ELIGIBILITY_DIR / "acat_PSC_eligibility.tsv"
+        ),
+        "AIH_cache_sha256": sha256(
+            ELIGIBILITY_DIR / "acat_AIH_eligibility.tsv"
+        ),
+        "eligibility_decision_sha256": sha256(DECISION),
+        "protocol_amendment_sha256": sha256(AMENDMENT),
+        "prior_reference_registry_sha256": sha256(SEED_REGISTRY),
+        "prior_reference_exception_sha256": sha256(SEED_EXCEPTIONS),
+        "matrix_sha256": sha256(OUT / "gene_trait_acat_matrix_11trait.tsv"),
+        "strata_sha256": sha256(
+            OUT / "gene_evidence_strata_and_hcc_alignment_11trait.tsv"
+        ),
+    }
+    (OUT / "SUCCESS.json").write_text(
+        json.dumps(success, indent=2, sort_keys=True) + "\n"
+    )
+    print(summary.to_string(index=False))
+    print(panel_frame.to_string(index=False))
+
+
+if __name__ == "__main__":
+    main()

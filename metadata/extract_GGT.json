@@ -1,0 +1,18 @@
+{
+  "trait": "GGT",
+  "path": "data/reference/gwas/grch37_primary/GCST90013407_buildGRCh37.tsv",
+  "sha256": "f5c8817015094c021d401b9ece84e3bfb8c0b36dd0bed5e17dcfe9c9e5c33054",
+  "counts": {
+    "raw_rows": 16901631,
+    "target_valid_rows": 74882
+  },
+  "coordinate_keys": 74826,
+  "actual_variant_keys": 74826,
+  "allele_status_counts": {
+    "exact_unordered_pair": 74694,
+    "literal_pair_mismatch_or_missing": 132
+  },
+  "replay_genes": 188,
+  "all_replays_passed": true,
+  "script_sha256": "2509d70ad8b5ad453c89c701566b138905ab55e3a4e6d017029f1e173b9731d5"
+}

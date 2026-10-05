@@ -1,0 +1,17 @@
+{
+  "trait": "NAFLD",
+  "path": "data/reference/gwas/grch37_primary/GCST90091033_buildGRCh37.tsv.gz",
+  "sha256": "f4945f0c6494145b130215506230ff53f2d5a696dd93bd99f3e70b14c7d6f938",
+  "counts": {
+    "raw_rows": 6797908,
+    "target_valid_rows": 65907
+  },
+  "coordinate_keys": 65907,
+  "actual_variant_keys": 65907,
+  "allele_status_counts": {
+    "exact_unordered_pair": 65907
+  },
+  "replay_genes": 283,
+  "all_replays_passed": true,
+  "script_sha256": "4217c683884c131c382b6bced1cc2792ce968eafa9ba8b240974a0e03cbfff0d"
+}

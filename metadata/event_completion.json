@@ -1,0 +1,12 @@
+{
+  "completed_utc": "2026-09-28T19:20:40.176269+00:00",
+  "status": "completed",
+  "no_new_models": true,
+  "no_coloc_reruns": true,
+  "protected_files": 314,
+  "events": 1465,
+  "event_pairs": 3224,
+  "checks": 69,
+  "all_passed": true,
+  "run_sha256": "228c448c12399bdf4784d4f5fedc39a19e0d97368dc7f0bc2bc1f9550f4123b8"
+}

@@ -1,0 +1,9 @@
+{
+  "python": "3.10.21",
+  "numpy": "1.24.4",
+  "pandas": "2.3.3",
+  "scipy": "1.15.2",
+  "statsmodels": "0.14.6",
+  "pixi_manifest": "github_release/HCC-liver-axis-postGWAS/pixi.toml",
+  "pixi_lock_sha256": "6f5ba29b6a3f1f584a1321afa38c4910a68764e5cfb2ed60daafadb9d2e45fa4"
+}

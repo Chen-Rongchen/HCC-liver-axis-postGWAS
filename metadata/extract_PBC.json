@@ -1,0 +1,18 @@
+{
+  "trait": "PBC",
+  "path": "data/reference/gwas/grch37_primary/GCST90061440_buildGRCh37.tsv",
+  "sha256": "439aa72c59b876236de2b8172c443a447cefa6868ace535183cec8b758a05921",
+  "counts": {
+    "raw_rows": 5054572,
+    "target_valid_rows": 46113
+  },
+  "coordinate_keys": 46113,
+  "actual_variant_keys": 46113,
+  "allele_status_counts": {
+    "exact_unordered_pair": 46108,
+    "literal_pair_mismatch_or_missing": 5
+  },
+  "replay_genes": 283,
+  "all_replays_passed": true,
+  "script_sha256": "2509d70ad8b5ad453c89c701566b138905ab55e3a4e6d017029f1e173b9731d5"
+}

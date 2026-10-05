@@ -1,0 +1,18 @@
+{
+  "trait": "AIH",
+  "path": "data/reference/gwas/external/AIH/GCST90018785_buildGRCh37.tsv.gz",
+  "sha256": "608f0934a6bb5365a881c915e9b425ac70178711e245df03fa0cf618d8e3f3d0",
+  "counts": {
+    "raw_rows": 25843756,
+    "target_valid_rows": 87432
+  },
+  "coordinate_keys": 86805,
+  "actual_variant_keys": 86805,
+  "allele_status_counts": {
+    "exact_unordered_pair": 86418,
+    "literal_pair_mismatch_or_missing": 387
+  },
+  "replay_genes": 283,
+  "all_replays_passed": true,
+  "script_sha256": "271e2e9d39bfc371ed050096db3928b9d4d4b79cf0b86afbb889aca5285b8817"
+}

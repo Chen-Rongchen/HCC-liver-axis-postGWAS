@@ -1,0 +1,20 @@
+{
+  "trait": "NAFLD",
+  "started_utc": "2026-09-28T12:38:20.309468+00:00",
+  "completed_utc": "2026-09-28T12:39:48.464409+00:00",
+  "input_path": "data/reference/gwas/grch37_primary/GCST90091033_buildGRCh37.tsv.gz",
+  "input_sha256": "f4945f0c6494145b130215506230ff53f2d5a696dd93bd99f3e70b14c7d6f938",
+  "saved_gene_source": "result/08_evidence_completion/acat_native_grch37_primary/acat_NAFLD_9trait.tsv",
+  "saved_gene_sha256": "978afb739efcd9cbcf54c9d7c96803a5ca8ddd41e0b56f2fc0785322121d54b3",
+  "script_sha256": "167923267acd940a40ae644e5e74173b97ce3ea2f14d8e82ae1827579ba52aae",
+  "n_genes": 18321,
+  "n_evaluable": 18304,
+  "legacy_replay_passed": true,
+  "raw_adapter_audit": {},
+  "method": "exact_P1_to_1_minus_1_over_d_sensitivity",
+  "primary_replaced": false,
+  "HCC_loaded": false,
+  "driver_sha256": "509635770e669edbaadfa92de1580e222829dd6a474f4fe1b2d7f88a8ba99184",
+  "charter_sha256": "627473e3941fc96d87a3ecb5bb40a1a5087d75e2f3af018c1828efba3542cbb9",
+  "nonboundary_unchanged": true
+}

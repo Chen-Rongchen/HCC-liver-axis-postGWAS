@@ -1,0 +1,124 @@
+#!/usr/bin/env python3
+"""Reference genotype QC, allele-aligned dense pairs and coverage; no fitting."""
+import importlib.util
+import json
+import sys
+from pathlib import Path
+import numpy as np
+import pandas as pd
+from scipy.stats import norm
+
+ROOT=Path(__file__).resolve().parents[2]
+OUT=ROOT/'analysis_hbsn_restructure/14_shared_signal_resolution'
+spec=importlib.util.spec_from_file_location('dense_inputs',Path(__file__).with_name('28_prepare_dense_shared_signal.py'))
+base=importlib.util.module_from_spec(spec); sys.modules[spec.name]=base; spec.loader.exec_module(base)
+old=base.old
+
+
+def main():
+    target=OUT/'paired_inputs'; target.mkdir(exist_ok=True)
+    refs=[]; offset=0
+    for q in pd.read_csv(str(old.REF_PREFIX['EUR'])+'.bim',sep=r'\s+',header=None,
+        names=['chr','rsid','cm','pos','a1','a2'],chunksize=500000):
+        q['bed_index']=np.arange(offset,offset+len(q)); offset+=len(q)
+        q['region_id']=old.map_positions_to_blocks(q.chr,q.pos,base.BLOCKS)
+        refs.append(q.loc[q.region_id.isin(base.REGION_IDS)].copy())
+    ref=pd.concat(refs,ignore_index=True)
+    ref['key']=ref.chr.astype(str)+':'+ref.pos.astype(str)+':'+np.minimum(ref.a1,ref.a2)+':'+np.maximum(ref.a1,ref.a2)
+    dup=ref.key.duplicated(keep=False)|ref.rsid.duplicated(keep=False)
+    ref['duplicate_reference_key']=dup
+    loader=old.PlinkReference(old.REF_PREFIX['EUR'])
+    genotypes=[]
+    for r in ref.itertuples():
+        off=3+r.bed_index*loader.bytes_per_snp
+        g=loader.lut[np.asarray(loader.mem[off:off+loader.bytes_per_snp])].reshape(-1)[:loader.n_samples].copy()
+        genotypes.append(g)
+    G=np.stack(genotypes)
+    ref['ref_a2_frequency']=np.nanmean(G,axis=1)/2
+    ref['ref_missing_rate']=np.isnan(G).mean(axis=1)
+    ref['ref_maf']=np.minimum(ref.ref_a2_frequency,1-ref.ref_a2_frequency)
+    ref['palindromic']=(ref.a1+ref.a2).isin(['AT','TA','CG','GC'])
+    ref['reference_QC_pass']=(~dup & ~ref.palindromic & ref.a1.isin(list('ACGT')) & ref.a2.isin(list('ACGT'))
+        & ref.a1.ne(ref.a2) & ref.ref_maf.ge(.01) & ref.ref_missing_rate.le(.02))
+    means=np.nanmean(G,axis=1); G=np.where(np.isnan(G),means[:,None],G)
+    ref.to_csv(OUT/'reference_variant_QC.tsv.gz',sep='\t',index=False)
+    geno_rows=[]
+    for index,r in base.REG.iterrows():
+        mask=ref.region_id.eq(r.region_id)&ref.reference_QC_pass
+        regional=ref.loc[mask].reset_index(drop=True)
+        directory=target/f'R{index+1:02d}'; directory.mkdir(exist_ok=True)
+        gd=pd.DataFrame(G[mask],columns=[f's{i}' for i in range(loader.n_samples)])
+        gd.insert(0,'rsid',regional.rsid.to_numpy())
+        gd.to_csv(directory/'reference_dosages.tsv.gz',sep='\t',index=False)
+        regional.to_csv(directory/'reference_variants.tsv',sep='\t',index=False)
+        geno_rows.append(dict(region_id=r.region_id,region_code=f'R{index+1:02d}',n_reference_raw=int(ref.region_id.eq(r.region_id).sum()),
+            n_reference_QC=len(regional),n_samples=loader.n_samples,dosage_allele='BIM_A2',
+            genotype_path=str((directory/'reference_dosages.tsv.gz').relative_to(ROOT))))
+    pd.DataFrame(geno_rows).to_csv(OUT/'reference_region_QC.tsv',sep='\t',index=False)
+    reference=ref.loc[ref.reference_QC_pass,['key','rsid','a1','a2','ref_a2_frequency','region_id','pos','chr']]
+    sources={}; freqrows=[]; source_rows=[]
+    for code in ['HCC_EUR']+[s.code for s in old.TRAITS]:
+        frame=pd.read_csv(base.DENSE/f'{code}.regions.tsv.gz',sep='\t')
+        joined=frame.merge(reference,on='key',suffixes=('_study',''),validate='one_to_one')
+        reverse=joined.ea.ne(joined.a2)
+        joined['beta_a2']=np.where(reverse,-joined.beta,joined.beta)
+        joined['eaf_a2_label']=np.where(reverse,1-joined.eaf,joined.eaf)
+        if code=='HCC_EUR':
+            for region,q in joined.groupby('region_id'):
+                direct=np.abs(q.eaf_a2_label-q.ref_a2_frequency)
+                complement=np.abs((1-q.eaf_a2_label)-q.ref_a2_frequency)
+                corr=q.ref_a2_frequency.corr(1-q.eaf_a2_label)
+                pass_freq=(len(q)>=100 and complement.median()<.05 and complement.median()<direct.median() and corr>.9)
+                freqrows.append(dict(region_id=region,n=len(q),median_delta_label=direct.median(),median_delta_complement=complement.median(),
+                    correlation_complement=corr,other_allele_interpretation_supported=bool(pass_freq)))
+            available=list(freqrows)
+            present={x['region_id'] for x in freqrows}
+            for region in sorted(base.REGION_IDS-present):
+                freqrows.append(dict(region_id=region,n=0,median_delta_label=np.nan,median_delta_complement=np.nan,
+                    correlation_complement=np.nan,other_allele_interpretation_supported=False,
+                    reason='no exact reference-overlapping HCC variants under current reciprocal mapping'))
+            pd.DataFrame(freqrows).to_csv(OUT/'HCC_18region_frequency_semantics.tsv',sep='\t',index=False)
+            if not all(x['other_allele_interpretation_supported'] for x in available):
+                raise RuntimeError('HCC frequency semantics inconsistent; do not choose orientation per variant')
+            joined['eaf_a2']=1-joined.eaf_a2_label
+        else: joined['eaf_a2']=joined.eaf_a2_label
+        delta=(joined.eaf_a2-joined.ref_a2_frequency).abs()
+        joined['frequency_pass']=delta.le(.20)|joined.eaf_a2.isna()
+        joined['z']=joined.beta_a2/joined.se
+        for region,q in joined.groupby('region_id'):
+            source_rows.append(dict(dataset=code,region_id=region,n_raw_regional=int(frame.region_id.eq(region).sum()),
+                n_reference_allele_overlap=len(q),n_frequency_pass=int(q.frequency_pass.sum()),
+                n_frequency_unavailable=int(q.eaf_a2.isna().sum()),n_min=q.n.min(),n_median=q.n.median(),n_max=q.n.max(),
+                median_abs_z_difference_beta_vs_P=np.nanmedian(np.abs(np.abs(q.z)-norm.isf(q.p/2)))))
+        sources[code]=joined.loc[joined.frequency_pass].copy()
+    pd.DataFrame(source_rows).to_csv(OUT/'dense_study_region_QC.tsv',sep='\t',index=False)
+    manifest=[]
+    for i,r in base.REG.iterrows():
+        h=sources['HCC_EUR'].loc[sources['HCC_EUR'].region_id.eq(r.region_id)]
+        directory=target/f'R{i+1:02d}'
+        for t in old.TRAITS:
+            liver=sources[t.code].loc[sources[t.code].region_id.eq(r.region_id)]
+            cols=['key','rsid','beta_a2','se','p','n','eaf_a2','z']
+            pair=h[cols].merge(liver[cols],on='key',suffixes=('_hcc','_liver'),validate='one_to_one')
+            assert pair.rsid_hcc.eq(pair.rsid_liver).all()
+            pair=pair.rename(columns={'rsid_hcc':'rsid'}).drop(columns='rsid_liver')
+            file=directory/f'{t.code}.tsv.gz'; pair.to_csv(file,sep='\t',index=False)
+            hc=len(pair)/len(h) if len(h) else 0; lc=len(pair)/len(liver) if len(liver) else 0
+            eligible=len(pair)>=100 and hc>=.8 and lc>=.8
+            nc=t.cases; nt=t.controls
+            manifest.append(dict(comparison_id=r.region_id+'__'+t.code,region_id=r.region_id,region_code=f'R{i+1:02d}',trait=t.code,
+                n_common=len(pair),n_HCC_available=len(h),n_liver_available=len(liver),coverage_HCC=hc,coverage_liver=lc,
+                coverage_eligible=eligible,first_failure='' if eligible else 'dense_common_coverage',
+                pair_path=str(file.relative_to(ROOT)),genotype_path=str((directory/'reference_dosages.tsv.gz').relative_to(ROOT)),
+                HCC_N=1566825,HCC_cases=8216,HCC_controls=1558609,HCC_case_fraction=8216/1566825,
+                liver_N=float(pair.n_liver.median()) if len(pair) else np.nan,liver_type=t.trait_type,
+                liver_cases=nc,liver_controls=nt,liver_case_fraction=old.case_fraction(nc,nt),
+                highest_robust_label_allowed=False,formal_fit_allowed=False,
+                effect_semantics_status='HCC beta allele and scale unresolved; metadata/code conflict',
+                overlap_handling='exploratory_only; cohort overlap possible/unknown',
+                reference_snp_order='reference_dosages row order; pair reordered before fitting'))
+    pd.DataFrame(manifest).to_csv(OUT/'dense_pair_QC_manifest.tsv',sep='\t',index=False)
+    print('Registered',len(manifest),'coverage eligible',sum(x['coverage_eligible'] for x in manifest),flush=True)
+
+
+if __name__=='__main__': main()

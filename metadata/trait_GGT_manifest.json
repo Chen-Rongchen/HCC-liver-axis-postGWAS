@@ -1,0 +1,20 @@
+{
+  "trait": "GGT",
+  "started_utc": "2026-09-28T12:37:42.085152+00:00",
+  "completed_utc": "2026-09-28T12:41:00.652584+00:00",
+  "input_path": "data/reference/gwas/grch37_primary/GCST90013407_buildGRCh37.tsv",
+  "input_sha256": "f5c8817015094c021d401b9ece84e3bfb8c0b36dd0bed5e17dcfe9c9e5c33054",
+  "saved_gene_source": "result/08_evidence_completion/acat_native_grch37_primary/acat_GGT_9trait.tsv",
+  "saved_gene_sha256": "222cc47a7bdc81dc7b34b9eb476a6606dca0fc2eab924d3e5838e874679b446c",
+  "script_sha256": "167923267acd940a40ae644e5e74173b97ce3ea2f14d8e82ae1827579ba52aae",
+  "n_genes": 18321,
+  "n_evaluable": 18084,
+  "legacy_replay_passed": true,
+  "raw_adapter_audit": {},
+  "method": "exact_P1_to_1_minus_1_over_d_sensitivity",
+  "primary_replaced": false,
+  "HCC_loaded": false,
+  "driver_sha256": "509635770e669edbaadfa92de1580e222829dd6a474f4fe1b2d7f88a8ba99184",
+  "charter_sha256": "627473e3941fc96d87a3ecb5bb40a1a5087d75e2f3af018c1828efba3542cbb9",
+  "nonboundary_unchanged": true
+}

@@ -1,0 +1,110 @@
+#!/usr/bin/env Rscript
+suppressPackageStartupMessages({library(data.table); library(susieR); library(coloc)})
+args <- commandArgs(trailingOnly=TRUE)
+base <- "analysis_hbsn_restructure/14_shared_signal_resolution"
+set.seed(20260925)
+
+fit_one <- function(z,R,n) {
+  f <- susie_rss(z=z,R=R,n=n,L=10,coverage=.95,min_abs_corr=.5,
+      max_iter=2000,tol=.001,estimate_residual_variance=FALSE,refine=FALSE,
+      n_purity=nrow(R))
+  colnames(f$lbf_variable) <- colnames(R)
+  names(f$pip) <- colnames(R)
+  f
+}
+
+if (identical(args,"--smoke")) {
+  X <- matrix(rnorm(503*120),503,120)
+  R <- cor(X); dimnames(R) <- list(paste0("s",1:120),paste0("s",1:120))
+  z <- R[,1]*9 + rnorm(120,sd=.3)
+  a <- fit_one(z,R,10000); b <- fit_one(z,R,20000)
+  result <- coloc.susie(a,b,p1=1e-4,p2=1e-4,p12=5e-6)
+  stopifnot(nrow(result$summary)>0,all(is.finite(result$summary$PP.H4.abf)))
+  print(result$summary)
+  cat("SMOKE_PASS: synthetic inputs only\n")
+  quit(status=0)
+}
+
+if (length(args)!=1) stop("Supply a region_code or --smoke")
+region <- args[[1]]
+manifest <- fread(file.path(base,"dense_pair_QC_manifest.tsv"))
+records <- manifest[region_code==region]
+out <- file.path(base,"susie_primary",region); dir.create(out,recursive=TRUE,showWarnings=FALSE)
+gd <- fread(records$genotype_path[[1]])
+snps <- gd$rsid; G <- as.matrix(gd[,!"rsid"])
+Rfull <- cor(t(G)); dimnames(Rfull) <- list(snps,snps)
+stopifnot(all(is.finite(Rfull)),max(abs(diag(Rfull)-1))<1e-8,max(abs(Rfull-t(Rfull)))<1e-8)
+PGRID <- c(1e-6,5e-6,1e-5,5e-5,1e-4)
+
+for(i in seq_len(nrow(records))) {
+  rec <- records[i]; trait <- rec$trait
+  done <- file.path(out,paste0(trait,".status.tsv"))
+  if(file.exists(done)) next
+  status <- data.table(comparison_id=rec$comparison_id,region_code=region,trait=trait,
+      n_variants=rec$n_common,coverage_eligible=rec$coverage_eligible,
+      primary_status="not_run",highest_robust_label_allowed=FALSE)
+  if (!isTRUE(rec$coverage_eligible)) {
+    status[,primary_status:="not_evaluable_coverage"]
+    fwrite(status,done,sep="\t"); next
+  }
+  message(region," ",trait," start; SNPs=",rec$n_common)
+  warnings_seen <- character()
+  result <- tryCatch(withCallingHandlers({
+    d <- fread(rec$pair_path)
+    d <- d[match(snps[snps %in% d$rsid],d$rsid)]
+    stopifnot(nrow(d)==rec$n_common,!anyDuplicated(d$rsid),all(is.finite(d$z_hcc)),all(is.finite(d$z_liver)))
+    R <- Rfull[d$rsid,d$rsid,drop=FALSE]
+    eig <- eigen(R,symmetric=TRUE)
+    if(min(eig$values)< -1e-7) stop("LD matrix is not PSD within numerical tolerance")
+    attr(R,"eigen") <- eig
+    status[,minimum_LD_eigenvalue:=min(eig$values)]
+    sh <- estimate_s_rss(d$z_hcc,R,n=rec$HCC_N)
+    sl <- estimate_s_rss(d$z_liver,R,n=rec$liver_N)
+    kh <- kriging_rss(d$z_hcc,R,n=rec$HCC_N,s=sh)$conditional_dist
+    kl <- kriging_rss(d$z_liver,R,n=rec$liver_N,s=sl)$conditional_dist
+    diagnostic <- data.table(rsid=d$rsid,HCC_logLR=kh$logLR,liver_logLR=kl$logLR,
+        HCC_z_std_diff=kh$z_std_diff,liver_z_std_diff=kl$z_std_diff,
+        HCC_flip_warning=kh$logLR>2 & abs(kh$z)>2,
+        liver_flip_warning=kl$logLR>2 & abs(kl$z)>2)
+    fwrite(diagnostic,file.path(out,paste0(trait,".LD_diagnostics.tsv.gz")),sep="\t")
+    status[,`:=`(HCC_s=sh,liver_s=sl,HCC_flip_warnings=sum(diagnostic$HCC_flip_warning),
+                 liver_flip_warnings=sum(diagnostic$liver_flip_warning))]
+    a <- fit_one(d$z_hcc,R,rec$HCC_N); b <- fit_one(d$z_liver,R,rec$liver_N)
+    saveRDS(list(HCC=a,liver=b,snps=d$rsid),file.path(out,paste0(trait,".fits.rds")))
+    nh <- length(a$sets$cs); nl <- length(b$sets$cs)
+    status[,`:=`(HCC_converged=isTRUE(a$converged),liver_converged=isTRUE(b$converged),
+        HCC_credible_sets=nh,liver_credible_sets=nl,HCC_iterations=a$niter,liver_iterations=b$niter,
+        HCC_L_cap_reached=nh>=10,liver_L_cap_reached=nl>=10)]
+    cs <- rbindlist(lapply(c("HCC","liver"),function(label) {
+      f <- if(label=="HCC") a else b
+      if(!length(f$sets$cs)) return(NULL)
+      rbindlist(lapply(seq_along(f$sets$cs),function(j) {
+        ind <- f$sets$cs[[j]]
+        data.table(study=label,signal=f$sets$cs_index[j],rsid=d$rsid[ind],pip=f$pip[ind],
+                   CS_name=names(f$sets$cs)[j])
+      }))
+    }),fill=TRUE)
+    if(nrow(cs)) fwrite(cs,file.path(out,paste0(trait,".credible_sets.tsv.gz")),sep="\t")
+    if(!isTRUE(a$converged)||!isTRUE(b$converged)) {
+      status[,primary_status:="not_evaluable_nonconvergence"]
+    } else if(nh==0||nl==0) {
+      status[,primary_status:="unresolved_no_credible_signal"]
+    } else {
+      post <- rbindlist(lapply(PGRID,function(pr) {
+        ret <- as.data.table(coloc.susie(a,b,p1=1e-4,p2=1e-4,p12=pr)$summary)
+        ret[,`:=`(p12=pr,comparison_id=rec$comparison_id)]
+        ret
+      }),fill=TRUE)
+      fwrite(post,file.path(out,paste0(trait,".signal_pairs.tsv")),sep="\t")
+      status[,primary_status:="signal_pair_evaluable_exploratory"]
+    }
+    TRUE
+  },warning=function(w) {
+    warnings_seen <<- c(warnings_seen,conditionMessage(w)); invokeRestart("muffleWarning")
+  }),error=function(e) {
+    status[,`:=`(primary_status="technical_error",error_message=conditionMessage(e))]; FALSE
+  })
+  status[,warnings:=paste(unique(warnings_seen),collapse=" | ")]
+  fwrite(status,done,sep="\t")
+  message(region," ",trait," ",status$primary_status)
+}

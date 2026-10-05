@@ -1,0 +1,32 @@
+{
+  "trait": "AIH",
+  "started_utc": "2026-09-28T12:40:11.107010+00:00",
+  "completed_utc": "2026-09-28T12:43:08.745945+00:00",
+  "input_path": "data/reference/gwas/external/AIH/GCST90018785_buildGRCh37.tsv.gz",
+  "input_sha256": "608f0934a6bb5365a881c915e9b425ac70178711e245df03fa0cf618d8e3f3d0",
+  "saved_gene_source": "result/17_trait_eligibility/acat_AIH_eligibility.tsv",
+  "saved_gene_sha256": "16e6b20cc55041face28e3dab7d2c0516cdac30284f55657d7d963cca134a52c",
+  "script_sha256": "167923267acd940a40ae644e5e74173b97ce3ea2f14d8e82ae1827579ba52aae",
+  "n_genes": 18321,
+  "n_evaluable": 18321,
+  "legacy_replay_passed": true,
+  "raw_adapter_audit": {
+    "total_rows": 25843756,
+    "valid_autosomal_coordinate_p_records": 25045161,
+    "unique_autosomal_coordinates": 24880467,
+    "invalid_or_missing_p_records": 0,
+    "invalid_coordinate_records": 0,
+    "nonautosomal_records": 798595,
+    "exact_zero_p_records": 0,
+    "allele_complete_records": 22902992,
+    "allele_complete_fraction": 0.9144677488797137,
+    "duplicate_coordinate_records": 164694,
+    "unique_coordinate_fraction": 0.9934241189345918
+  },
+  "method": "exact_P1_to_1_minus_1_over_d_sensitivity",
+  "primary_replaced": false,
+  "HCC_loaded": false,
+  "driver_sha256": "509635770e669edbaadfa92de1580e222829dd6a474f4fe1b2d7f88a8ba99184",
+  "charter_sha256": "627473e3941fc96d87a3ecb5bb40a1a5087d75e2f3af018c1828efba3542cbb9",
+  "nonboundary_unchanged": true
+}

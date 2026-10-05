@@ -1,0 +1,109 @@
+import hashlib
+import importlib.util
+import json
+import math
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+import mpmath as mp
+import numpy as np
+import pandas as pd
+
+OUT = Path(__file__).resolve().parents[1]
+ROOT = OUT.parents[1]
+BASE = ROOT/'analysis_hbsn_restructure'
+UP = ROOT/'analysis_update_2026_hcc_gwas'
+
+def load(path, name):
+    spec = importlib.util.spec_from_file_location(name, path)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[name] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+def sha(path):
+    h=hashlib.sha256()
+    with path.open('rb') as stream:
+        for block in iter(lambda:stream.read(8*1024*1024),b''):
+            h.update(block)
+    return h.hexdigest()
+
+def write(df,name):
+    df.to_csv(OUT/name,sep='\t',index=False,na_rep='',float_format='%.17g')
+
+def stable_acat(p):
+    p=np.asarray(p,dtype=float)
+    p=p[np.isfinite(p)&(p>=0)&(p<=1)]
+    if not len(p): return np.nan
+    p=np.clip(p,1e-300,1.)
+    if len(p)==1: return float(p[0])
+    term=np.zeros(len(p))
+    lo=p<.5
+    hi=(p>.5)&(p<1.)
+    # cot(pi*p) avoids subtraction from 0.5 at the lower tail.
+    term[lo]=1/np.tan(np.pi*p[lo])
+    term[hi]=-1/np.tan(np.pi*(1-p[hi]))
+    # P=1 remains neutral to isolate numerical accuracy from boundary policy.
+    statistic=math.fsum((term/len(p)).tolist())
+    return max(math.atan2(1.,statistic)/math.pi,1e-300)
+
+def reference(p):
+    with mp.workdps(400):
+        vals=[max(mp.mpf(float(x)),mp.mpf(1e-300)) for x in p]
+        if len(vals)==1: return float(vals[0])
+        t=mp.fsum([mp.cot(mp.pi*x) if x<1 else mp.mpf(0) for x in vals])/len(vals)
+        return max(float(mp.atan2(1,t)/mp.pi),1e-300)
+
+def main():
+    frozen=load(UP/'code/compute_primary_gene_level_acat.py','frozen_acat_numerical_audit')
+    old=frozen.acat
+    paths=[OUT/'charter.md',Path(__file__),UP/'code/compute_primary_gene_level_acat.py',BASE/'00_charter/analysis_parameters.json',BASE/'02_identifiability/liver_only_feature_and_eligibility_registry.tsv',ROOT/'github_release/HCC-liver-axis-postGWAS/derived_data/hcc_gene_assessment.tsv']
+    paths+=list((ROOT/'submission/EJHG_evidence_revision').rglob('*'))
+    paths+=[frozen.MAP/'gene_registry.tsv']
+    for c in range(1,23):
+        paths += [frozen.MAP/f'chr{c:02d}_{kind}.npy' for kind in ('gene_index','variant_index')]
+        for endpoint in frozen.ENDPOINTS:
+            paths += [frozen.ADAPTED/endpoint/f'chr{c:02d}_{kind}.npy' for kind in ('p','n')]
+    paths += [frozen.OUT/spec['output'] for spec in frozen.ENDPOINTS.values()]
+    paths = sorted(set(p for p in paths if p.is_file()))
+    lock=pd.DataFrame([dict(path=str(p.relative_to(ROOT)),size=p.stat().st_size,sha256=sha(p)) for p in paths])
+    write(lock,'protected_inputs_before.tsv')
+    tests=[('moderate',[.001,.02,.4,.8]),('symmetric',[.1,.9]),('all_half',[.5,.5]),('one_boundary',[1.,.001]),('all_one',[1.,1.]),('zero_floor',[0.,.2]),('near_one',[np.nextafter(1.,0.),.01])]
+    for exponent in (8,12,15,16,20,50,100,250,300):
+        tests.append((f'tail_{exponent}',[10.**-exponent,.05,.9]))
+    rows=[]
+    for label,p in tests:
+        stable,ref=stable_acat(p),reference(p)
+        rows.append(dict(test=label,old_p=old(p),stable_p=stable,reference_400digit=ref,relative_error=abs(stable-ref)/max(ref,1e-300)))
+        assert math.isclose(stable,ref,rel_tol=1e-11,abs_tol=0),rows[-1]
+    write(pd.DataFrame(rows),'high_precision_validation.tsv')
+    genes=pd.read_csv(frozen.MAP/'gene_registry.tsv',sep='\t')
+    def paired(p):
+        p=np.asarray(p)
+        return dict(replay_p=old(p),stable_p=stable_acat(p),n_input_below_1e_16=int((p<1e-16).sum()),n_input_zero=int((p==0).sum()),n_input_one=int((p==1).sum()))
+    frozen.acat=paired
+    summaries=[]
+    for endpoint,spec in frozen.ENDPOINTS.items():
+        ancestry='EUR' if endpoint.endswith('790') else 'EAS'
+        result=frozen.compute_endpoint(endpoint,spec,genes)
+        details=pd.DataFrame(result.pop('acat_p').tolist())
+        result=pd.concat([result,details],axis=1)
+        source=pd.read_csv(frozen.OUT/spec['output'],sep='\t',float_precision='round_trip')
+        result=result.merge(source[['gene','acat_p']],on='gene',validate='one_to_one').rename(columns={'acat_p':'source_p'})
+        valid=result.evaluable
+        assert np.allclose(result.loc[valid,'replay_p'],result.loc[valid,'source_p'],rtol=1e-12,atol=0)
+        assert np.array_equal(result.replay_p.notna(),result.stable_p.notna())
+        write(result,f'{ancestry}_gene_numerical_audit.tsv')
+        summaries.append(dict(ancestry=ancestry,n_genes=len(result),evaluable=int(valid.sum()),replay_pass=True,genes_with_small_inputs=int(result.n_input_below_1e_16.gt(0).sum()),genes_with_P1=int(result.n_input_one.gt(0).sum()),genes_with_P0=int(result.n_input_zero.gt(0).sum()),max_log10_difference=float(np.max(np.abs(np.log10(result.loc[valid,'source_p'])-np.log10(result.loc[valid,'stable_p']))))))
+        print(json.dumps(summaries[-1]),flush=True)
+    write(pd.DataFrame(summaries),'endpoint_numerical_summary.tsv')
+    checks=[]
+    for r in lock.itertuples():
+        after=sha(ROOT/r.path)
+        checks.append(dict(path=r.path,unchanged=after==r.sha256,sha256_after=after))
+    write(pd.DataFrame(checks),'protected_inputs_after.tsv')
+    assert all(r['unchanged'] for r in checks)
+    (OUT/'numerical_run_manifest.json').write_text(json.dumps(dict(completed_utc=datetime.now(timezone.utc).isoformat(),scope='primary_EUR_EAS_HCC_only; frozen_liver_side',numpy=np.__version__,mpmath=mp.__version__,script_sha256=sha(Path(__file__))),indent=2))
+
+if __name__=='__main__': main()

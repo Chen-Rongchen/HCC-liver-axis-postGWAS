@@ -1,0 +1,31 @@
+{
+  "accession": "GCST90860790",
+  "status": "deterministic_discrepancy_found",
+  "counters": {
+    "raw_rows": 21986982,
+    "numeric_invalid_raw_rows": 301087,
+    "P_zero_or_underflow_rows": 0,
+    "same_chrom_plus_mapped_rows": 21834744,
+    "forward_multiple_raw_rows": 0,
+    "legacy_missed_unique_mapping_rows": 0,
+    "legacy_unique_mapping_disagreements": 0,
+    "exact_frozen_key_raw_matches": 6658074,
+    "valid_frozen_key_raw_matches": 6658074,
+    "invalid_frozen_key_raw_matches": 0,
+    "accepted_ambiguous_mapping_rows": 1370,
+    "repeated_mapped_keys": 48,
+    "invalid_only_unrepresented_keys": 0,
+    "unique_valid_keys": 6657978
+  },
+  "cache_field_discrepancies": 336,
+  "P_affected_genes": 61,
+  "mapping_uniqueness_pass": false,
+  "raw_identity": {
+    "path": "analysis_update_2026_hcc_gwas/02_inputs/raw_gwas/GCST90860790.tsv.gz",
+    "bytes": 728350130,
+    "md5": "13b3a1f9a4120747bbe55a7905439bd1",
+    "sha256": "289f769260f21352e69ae452f414439571deff93352962d3e6359f0b6d9eaf54"
+  },
+  "scope": "raw file to all frozen cache keys; original numerical filter and P floor retained",
+  "new_models_run": 0
+}

@@ -1,0 +1,3 @@
+accession	ancestry	analysis	cases	controls	total_design_n	case_fraction	build	analysis_role	public_source
+GCST90860790	EUR	METAL ancestry-specific	8216	1558609	1566825	0.00524372536818	GRCh38	EUR HCC association assessment	https://www.ebi.ac.uk/gwas/studies/GCST90860790
+GCST90860791	EAS	METAL ancestry-specific	7355	629454	636809	0.0115497739511	GRCh38	EAS HCC association assessment	https://www.ebi.ac.uk/gwas/studies/GCST90860791

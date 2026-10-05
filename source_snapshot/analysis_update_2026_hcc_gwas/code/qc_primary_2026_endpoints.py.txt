@@ -1,0 +1,653 @@
+#!/usr/bin/env python3
+"""QC and adapt the 2026 EUR/EAS HCC endpoints to the frozen GRCh37 map.
+
+This stage validates raw P values, METAL beta/SE semantics, duplicates,
+GRCh38-to-GRCh37 conversion, and allele agreement.  It writes standardized
+per-variant arrays for later ACAT but deliberately does not calculate any new
+gene-level result before the QC gate is reviewed.
+"""
+
+from __future__ import annotations
+
+import gzip
+import hashlib
+import json
+import math
+from collections import Counter
+from datetime import datetime, timezone
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+
+
+ROOT = Path(__file__).resolve().parents[2]
+UPDATE = ROOT / "analysis_update_2026_hcc_gwas"
+RAW = UPDATE / "02_inputs" / "raw_gwas"
+QC = UPDATE / "03_qc"
+MAP = QC / "frozen_map_cache"
+ADAPTED = UPDATE / "05_gene_level" / "adapted_variant_cache"
+CHAIN = ROOT / "data/reference/liftover/hg38ToHg19.over.chain.gz"
+REGISTRY = UPDATE / "02_inputs/reference_publication/hcc_2026_fifteen_locus_registry.tsv"
+CHUNK = 500_000
+TOKEN_BITS = 17
+PAIR_BITS = 34
+
+ENDPOINTS = {
+    "GCST90860790": {
+        "label": "new_EUR_METAL",
+        "ancestry": "EUR",
+        "cases": 8216,
+        "controls": 1_558_609,
+        "direction_width": 7,
+        "paper_p_column": "p_metal_eur",
+        "official_md5": "13b3a1f9a4120747bbe55a7905439bd1",
+    },
+    "GCST90860791": {
+        "label": "new_EAS_METAL",
+        "ancestry": "EAS",
+        "cases": 7355,
+        "controls": 629_454,
+        "direction_width": 4,
+        "paper_p_column": "p_metal_eas",
+        "official_md5": "e0d4d1266d92271be54cd8bcebb78055",
+    },
+}
+
+REQUIRED = [
+    "chromosome", "base_pair_location", "effect_allele", "other_allele",
+    "beta", "standard_error", "effect_allele_frequency", "p_value",
+    "rsid", "n", "DIRECTION",
+]
+NUMERIC = [
+    "chromosome", "base_pair_location", "beta", "standard_error",
+    "effect_allele_frequency", "p_value", "n",
+]
+
+
+def md5(path: Path) -> str:
+    h = hashlib.md5()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(16 * 1024 * 1024), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
+def sha256(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(16 * 1024 * 1024), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
+class SameChromosomeChainMap:
+    """Frozen same-chromosome, plus-strand chain implementation.
+
+    This is the same mapping contract used by
+    scripts/14_evidence_boundary_completion/14_build_ld_locus_and_coloc_inputs.py.
+    Unmapped, cross-chromosome, reverse-strand, and non-primary-contig records
+    remain missing rather than being guessed.
+    """
+
+    def __init__(self, path: Path):
+        forward: dict[int, list[tuple[int, int, int]]] = {}
+        total_chains = usable_chains = 0
+        with gzip.open(path, "rt") as handle:
+            t_chr = t_pos = q_pos = None
+            usable = False
+            for line in handle:
+                if line.startswith("chain "):
+                    total_chains += 1
+                    z = line.split()
+                    t_name, t_strand, t_start = z[2], z[4], int(z[5])
+                    q_name, q_strand, q_start = z[7], z[9], int(z[10])
+                    usable = (
+                        t_strand == "+" and q_strand == "+" and t_name == q_name
+                        and t_name.startswith("chr") and t_name[3:].isdigit()
+                    )
+                    if usable:
+                        usable_chains += 1
+                        t_chr = int(t_name[3:])
+                        t_pos, q_pos = t_start, q_start
+                    continue
+                if not line.strip() or not usable:
+                    continue
+                z = line.split()
+                size = int(z[0])
+                forward.setdefault(int(t_chr), []).append((int(t_pos), int(t_pos) + size, int(q_pos)))
+                if len(z) == 3:
+                    t_pos += size + int(z[1])
+                    q_pos += size + int(z[2])
+                else:
+                    usable = False
+        self.forward = {chrom: self._arrays(blocks) for chrom, blocks in forward.items()}
+        self.total_chains = total_chains
+        self.usable_chains = usable_chains
+
+    @staticmethod
+    def _arrays(blocks: list[tuple[int, int, int]]) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        blocks = sorted(blocks)
+        return tuple(np.asarray(x, dtype=np.int64) for x in zip(*blocks))
+
+    def map(self, chrom: np.ndarray, pos_1based: np.ndarray) -> np.ndarray:
+        out = np.full(len(chrom), np.nan, dtype=float)
+        for ch in range(1, 23):
+            idx = np.flatnonzero(chrom == ch)
+            if not len(idx) or ch not in self.forward:
+                continue
+            starts, stops, dest = self.forward[ch]
+            x = pos_1based[idx].astype(float) - 1
+            loc = np.searchsorted(starts, x, side="right") - 1
+            safe = np.clip(loc, 0, len(starts) - 1)
+            ok = (loc >= 0) & np.isfinite(x) & (x < stops[safe])
+            mapped = np.full(len(idx), np.nan, dtype=float)
+            mapped[ok] = dest[safe[ok]] + (x[ok] - starts[safe[ok]]) + 1
+            out[idx] = mapped
+        return out
+
+
+class EndpointScan:
+    def __init__(self, accession: str, spec: dict, chain: SameChromosomeChainMap):
+        self.accession = accession
+        self.spec = spec
+        self.chain = chain
+        self.path = RAW / f"{accession}.tsv.gz"
+        self.out = ADAPTED / accession
+        self.out.mkdir(parents=True, exist_ok=True)
+        self.rng = np.random.default_rng(20260827 + int(accession[-2:]))
+        self.stats = Counter()
+        self.chrom_counts = Counter()
+        self.direction_lengths = Counter()
+        self.p_samples: list[np.ndarray] = []
+        self.n_samples: list[np.ndarray] = []
+        self.p_min = math.inf
+        self.p_max = -math.inf
+        self.beta_min = math.inf
+        self.beta_max = -math.inf
+        self.se_min = math.inf
+        self.se_max = -math.inf
+        self.eaf_min = math.inf
+        self.eaf_max = -math.inf
+        self.n_min = math.inf
+        self.n_max = -math.inf
+        self.previous_order_key: int | None = None
+        self.duplicate_rows: list[dict[str, object]] = []
+        self.locus_rows: list[pd.DataFrame] = []
+        self.registry = pd.read_csv(REGISTRY, sep="\t")
+        self.locus_ids = set(self.registry["lead_rsid"].astype(str))
+        self.keys: dict[int, np.ndarray] = {}
+        self.positions: dict[int, np.ndarray] = {}
+        self.token_lookup: dict[int, dict[str, int]] = {}
+        self.arrays: dict[int, dict[str, np.memmap]] = {}
+        self._initialize_arrays()
+
+    def _initialize_arrays(self) -> None:
+        for chrom in range(1, 23):
+            keys = np.load(MAP / f"chr{chrom:02d}_variant_keys.npy", mmap_mode="r")
+            pos = np.load(MAP / f"chr{chrom:02d}_positions.npy", mmap_mode="r")
+            if len(keys) != len(pos) or not np.array_equal((keys >> np.uint64(PAIR_BITS)).astype(np.int64), pos):
+                raise RuntimeError(f"chr{chrom}: frozen key/position cache is not one-to-one")
+            tokens = pd.read_csv(MAP / f"chr{chrom:02d}_allele_tokens.tsv", sep="\t", keep_default_na=False)
+            lookup = dict(zip(tokens["allele"].astype(str), tokens["allele_code"].astype(int)))
+            self.keys[chrom], self.positions[chrom], self.token_lookup[chrom] = keys, pos, lookup
+            arrays: dict[str, np.memmap] = {}
+            for name, dtype, fill in [
+                ("p", np.float64, np.nan), ("beta", np.float64, np.nan),
+                ("se", np.float64, np.nan), ("eaf", np.float64, np.nan),
+                ("n", np.float64, np.nan), ("effect_token", np.int32, -1),
+                ("conflict", np.uint8, 0),
+            ]:
+                arr = np.lib.format.open_memmap(
+                    self.out / f"chr{chrom:02d}_{name}.npy", mode="w+", dtype=dtype, shape=(len(keys),)
+                )
+                arr[:] = fill
+                arrays[name] = arr
+            self.arrays[chrom] = arrays
+
+    @staticmethod
+    def numeric(frame: pd.DataFrame, column: str) -> np.ndarray:
+        return pd.to_numeric(frame[column], errors="coerce").to_numpy(dtype=float)
+
+    def update_raw_stats(self, frame: pd.DataFrame) -> None:
+        self.stats["raw_rows"] += len(frame)
+        ch = self.numeric(frame, "chromosome")
+        pos = self.numeric(frame, "base_pair_location")
+        valid_coord = np.isfinite(ch) & np.isfinite(pos) & (ch >= 1) & (ch <= 22) & (pos > 0)
+        self.stats["invalid_autosomal_coordinate_rows"] += int((~valid_coord).sum())
+        for value, count in pd.Series(ch[valid_coord].astype(int)).value_counts().items():
+            self.chrom_counts[int(value)] += int(count)
+        if valid_coord.any():
+            order_keys = ch[valid_coord].astype(np.int64) * 1_000_000_000 + pos[valid_coord].astype(np.int64)
+            self.stats["coordinate_order_regressions"] += int((np.diff(order_keys) < 0).sum())
+            if self.previous_order_key is not None and int(order_keys[0]) < self.previous_order_key:
+                self.stats["coordinate_order_regressions"] += 1
+            self.previous_order_key = int(order_keys[-1])
+
+        for column, attr_min, attr_max in [
+            ("p_value", "p_min", "p_max"), ("beta", "beta_min", "beta_max"),
+            ("standard_error", "se_min", "se_max"),
+            ("effect_allele_frequency", "eaf_min", "eaf_max"), ("n", "n_min", "n_max"),
+        ]:
+            values = self.numeric(frame, column)
+            finite = values[np.isfinite(values)]
+            self.stats[f"nonfinite_{column}_rows"] += int((~np.isfinite(values)).sum())
+            if len(finite):
+                setattr(self, attr_min, min(getattr(self, attr_min), float(finite.min())))
+                setattr(self, attr_max, max(getattr(self, attr_max), float(finite.max())))
+                take = min(5_000, len(finite))
+                chosen = finite[self.rng.choice(len(finite), size=take, replace=False)]
+                if column == "p_value":
+                    self.p_samples.append(chosen)
+                elif column == "n":
+                    self.n_samples.append(chosen)
+
+        p = self.numeric(frame, "p_value")
+        beta = self.numeric(frame, "beta")
+        se = self.numeric(frame, "standard_error")
+        eaf = self.numeric(frame, "effect_allele_frequency")
+        n = self.numeric(frame, "n")
+        self.stats["p_equal_zero_rows"] += int(np.isfinite(p).sum() and np.count_nonzero(p == 0))
+        self.stats["p_outside_zero_one_rows"] += int(np.count_nonzero(np.isfinite(p) & ((p < 0) | (p > 1))))
+        self.stats["nonfinite_beta_or_se_rows"] += int(np.count_nonzero(~np.isfinite(beta) | ~np.isfinite(se)))
+        self.stats["nonpositive_se_rows"] += int(np.count_nonzero(np.isfinite(se) & (se <= 0)))
+        self.stats["eaf_outside_zero_one_rows"] += int(np.count_nonzero(np.isfinite(eaf) & ((eaf < 0) | (eaf > 1))))
+        self.stats["nonpositive_n_rows"] += int(np.count_nonzero(np.isfinite(n) & (n <= 0)))
+        self.stats["n_exceeds_published_design_total_rows"] += int(
+            np.count_nonzero(np.isfinite(n) & (n > self.spec["cases"] + self.spec["controls"]))
+        )
+        ea = frame["effect_allele"].astype(str).str.upper()
+        oa = frame["other_allele"].astype(str).str.upper()
+        self.stats["empty_or_equal_allele_rows"] += int((ea.str.len().eq(0) | oa.str.len().eq(0) | ea.eq(oa)).sum())
+        for length, count in frame["DIRECTION"].astype(str).str.len().value_counts().items():
+            self.direction_lengths[int(length)] += int(count)
+        loci = frame.loc[frame["rsid"].astype(str).isin(self.locus_ids), REQUIRED].copy()
+        if len(loci):
+            loci.insert(0, "endpoint", self.accession)
+            self.locus_rows.append(loci)
+
+    def deduplicate(self, frame: pd.DataFrame) -> pd.DataFrame:
+        if not len(frame):
+            return frame
+        q = frame.copy()
+        ea = q["effect_allele"].astype(str).str.upper()
+        oa = q["other_allele"].astype(str).str.upper()
+        ea_array, oa_array = ea.to_numpy(dtype=str), oa.to_numpy(dtype=str)
+        q["_allele_lo"] = np.where(ea_array <= oa_array, ea_array, oa_array)
+        q["_allele_hi"] = np.where(ea_array <= oa_array, oa_array, ea_array)
+        key = ["chromosome", "base_pair_location", "_allele_lo", "_allele_hi"]
+        duplicate = q.duplicated(key, keep=False)
+        if not duplicate.any():
+            return q.drop(columns=["_allele_lo", "_allele_hi"])
+        keep = pd.Series(True, index=q.index)
+        for values, group in q.loc[duplicate].groupby(key, sort=False, dropna=False):
+            semantic = group[REQUIRED].drop_duplicates()
+            record = {
+                "endpoint": self.accession,
+                "chromosome": values[0],
+                "base_pair_location": values[1],
+                "allele_lo": values[2],
+                "allele_hi": values[3],
+                "records": len(group),
+            }
+            if len(semantic) == 1:
+                record["event_type"] = "exact_duplicate_collapsed"
+                record["excluded_records"] = len(group) - 1
+                keep.loc[group.index[1:]] = False
+                self.stats["exact_duplicate_records_collapsed"] += len(group) - 1
+            else:
+                record["event_type"] = "conflicting_duplicate_excluded"
+                record["excluded_records"] = len(group)
+                record["first_record"] = json.dumps({c: str(group.iloc[0][c]) for c in REQUIRED}, sort_keys=True)
+                record["second_record"] = json.dumps({c: str(group.iloc[1][c]) for c in REQUIRED}, sort_keys=True)
+                keep.loc[group.index] = False
+                self.stats["conflicting_duplicate_variant_keys"] += 1
+                self.stats["conflicting_duplicate_records_excluded"] += len(group)
+            self.duplicate_rows.append(record)
+        return q.loc[keep].drop(columns=["_allele_lo", "_allele_hi"])
+
+    def adapt(self, frame: pd.DataFrame) -> None:
+        frame = self.deduplicate(frame)
+        if not len(frame):
+            return
+        ch_float = self.numeric(frame, "chromosome")
+        pos38 = self.numeric(frame, "base_pair_location")
+        ch = np.where(np.isfinite(ch_float), ch_float, -1).astype(np.int64)
+        valid_coord = (ch >= 1) & (ch <= 22) & np.isfinite(pos38) & (pos38 > 0)
+        mapped = self.chain.map(ch, pos38)
+        self.stats["deduplicated_rows_considered"] += len(frame)
+        self.stats["valid_autosomal_coordinate_rows"] += int(valid_coord.sum())
+        self.stats["liftover_mapped_rows"] += int(np.count_nonzero(valid_coord & np.isfinite(mapped)))
+        self.stats["liftover_unmapped_rows"] += int(np.count_nonzero(valid_coord & ~np.isfinite(mapped)))
+
+        ea = frame["effect_allele"].astype(str).str.upper().to_numpy(dtype=str)
+        oa = frame["other_allele"].astype(str).str.upper().to_numpy(dtype=str)
+        allele_valid = (np.char.str_len(ea) > 0) & (np.char.str_len(oa) > 0) & (ea != oa)
+        p = self.numeric(frame, "p_value")
+        beta = self.numeric(frame, "beta")
+        se = self.numeric(frame, "standard_error")
+        eaf = self.numeric(frame, "effect_allele_frequency")
+        n = self.numeric(frame, "n")
+        stat_valid = (
+            np.isfinite(p) & (p >= 0) & (p <= 1) & np.isfinite(beta)
+            & np.isfinite(se) & (se > 0) & np.isfinite(eaf) & (eaf >= 0)
+            & (eaf <= 1) & np.isfinite(n) & (n > 0)
+        )
+        p = np.where(p == 0, 1e-300, p)
+        self.stats["rows_excluded_by_numeric_contract"] += int((~stat_valid).sum())
+
+        for chrom in range(1, 23):
+            idx = np.flatnonzero((ch == chrom) & np.isfinite(mapped) & allele_valid)
+            if not len(idx):
+                continue
+            pos37 = mapped[idx].astype(np.int64)
+            positions = self.positions[chrom]
+            loc = np.searchsorted(positions, pos37)
+            safe = np.minimum(loc, len(positions) - 1)
+            position_hit = (loc < len(positions)) & (positions[safe] == pos37)
+            self.stats["broadaway_position_overlap_rows"] += int(position_hit.sum())
+            if not position_hit.any():
+                continue
+            use_idx = idx[position_hit]
+            variant_idx = loc[position_hit]
+            lookup = self.token_lookup[chrom]
+            ea_code = pd.Series(ea[use_idx]).map(lookup).fillna(-1).to_numpy(dtype=np.int64)
+            oa_code = pd.Series(oa[use_idx]).map(lookup).fillna(-1).to_numpy(dtype=np.int64)
+            known = (ea_code >= 0) & (oa_code >= 0)
+            safe_ea = np.maximum(ea_code, 0)
+            safe_oa = np.maximum(oa_code, 0)
+            lo = np.minimum(safe_ea, safe_oa).astype(np.uint64)
+            hi = np.maximum(safe_ea, safe_oa).astype(np.uint64)
+            raw_key = (pos37[position_hit].astype(np.uint64) << np.uint64(PAIR_BITS)) | (lo << np.uint64(TOKEN_BITS)) | hi
+            allele_match = known & (self.keys[chrom][variant_idx] == raw_key)
+            self.stats["broadaway_allele_match_rows"] += int(allele_match.sum())
+            self.stats["broadaway_allele_mismatch_rows"] += int((~allele_match).sum())
+            ea_use, oa_use = ea[use_idx], oa[use_idx]
+            pair_text = np.char.add(np.where(ea_use <= oa_use, ea_use, oa_use), np.where(ea_use <= oa_use, oa_use, ea_use))
+            self.stats["palindromic_position_overlap_rows"] += int(np.isin(pair_text, ["AT", "CG"]).sum())
+            fill = allele_match & stat_valid[use_idx]
+            if not fill.any():
+                continue
+            src = use_idx[fill]
+            dst = variant_idx[fill]
+            arrays = self.arrays[chrom]
+            existing = np.isfinite(arrays["p"][dst])
+            if existing.any():
+                repeat_dst = dst[existing]
+                repeat_src = src[existing]
+                same = (
+                    (arrays["p"][repeat_dst] == p[repeat_src])
+                    & (arrays["beta"][repeat_dst] == beta[repeat_src])
+                    & (arrays["se"][repeat_dst] == se[repeat_src])
+                    & (arrays["eaf"][repeat_dst] == eaf[repeat_src])
+                    & (arrays["n"][repeat_dst] == n[repeat_src])
+                    & (arrays["effect_token"][repeat_dst] == ea_code[fill][existing])
+                )
+                self.stats["nonadjacent_identical_mapped_repeats"] += int(same.sum())
+                conflict_dst = repeat_dst[~same]
+                arrays["conflict"][conflict_dst] = 1
+                self.stats["nonadjacent_conflicting_mapped_repeats"] += len(conflict_dst)
+            fresh = ~existing
+            if fresh.any():
+                fsrc, fdst = src[fresh], dst[fresh]
+                arrays["p"][fdst] = p[fsrc]
+                arrays["beta"][fdst] = beta[fsrc]
+                arrays["se"][fdst] = se[fsrc]
+                arrays["eaf"][fdst] = eaf[fsrc]
+                arrays["n"][fdst] = n[fsrc]
+                arrays["effect_token"][fdst] = ea_code[fill][fresh]
+
+    def run(self) -> None:
+        if md5(self.path) != self.spec["official_md5"]:
+            raise RuntimeError(f"{self.accession}: raw file no longer matches official MD5")
+        pending: pd.DataFrame | None = None
+        header_checked = False
+        for chunk in pd.read_csv(self.path, sep="\t", chunksize=CHUNK, low_memory=False):
+            if not header_checked:
+                missing = [c for c in REQUIRED if c not in chunk.columns]
+                if missing:
+                    raise RuntimeError(f"{self.accession}: missing required columns {missing}")
+                header_checked = True
+            self.update_raw_stats(chunk)
+            work = pd.concat([pending, chunk], ignore_index=True) if pending is not None else chunk.reset_index(drop=True)
+            last_ch = work.iloc[-1]["chromosome"]
+            last_pos = work.iloc[-1]["base_pair_location"]
+            last_mask = work["chromosome"].eq(last_ch) & work["base_pair_location"].eq(last_pos)
+            pending = work.loc[last_mask].copy()
+            self.adapt(work.loc[~last_mask].copy())
+        if pending is not None:
+            self.adapt(pending)
+
+        for chrom, arrays in self.arrays.items():
+            conflict = arrays["conflict"].astype(bool)
+            if conflict.any():
+                for name in ["p", "beta", "se", "eaf", "n"]:
+                    arrays[name][conflict] = np.nan
+                arrays["effect_token"][conflict] = -1
+            for array in arrays.values():
+                array.flush()
+            self.stats["standardized_broadaway_variants"] += int(np.isfinite(arrays["p"]).sum())
+        self.write_manifest()
+
+    def write_manifest(self) -> None:
+        outputs = []
+        for chrom in range(1, 23):
+            for name in ["p", "beta", "se", "eaf", "n", "effect_token", "conflict"]:
+                path = self.out / f"chr{chrom:02d}_{name}.npy"
+                outputs.append({"chromosome": chrom, "field": name, "local_file": str(path.relative_to(ROOT)), "bytes": path.stat().st_size})
+        pd.DataFrame(outputs).to_csv(self.out / "array_manifest.tsv", sep="\t", index=False)
+        status = {
+            "endpoint": self.accession,
+            "status": "adapted_pending_final_qc_gate",
+            "completed_utc": datetime.now(timezone.utc).isoformat(),
+            "raw_file": str(self.path.relative_to(ROOT)),
+            "raw_md5": self.spec["official_md5"],
+            "chain_file": str(CHAIN.relative_to(ROOT)),
+            "chain_sha256": sha256(CHAIN),
+            "p_zero_rule": "frozen 1e-300 floor",
+            "mapping": "GRCh38 to GRCh37; frozen same-chromosome plus-strand chain blocks; exact Broadaway coordinate and unordered allele pair",
+        }
+        (self.out / "STATUS.json").write_text(json.dumps(status, indent=2, sort_keys=True) + "\n")
+
+    def summary_row(self) -> dict[str, object]:
+        p_sample = np.concatenate(self.p_samples) if self.p_samples else np.array([])
+        n_sample = np.concatenate(self.n_samples) if self.n_samples else np.array([])
+        row: dict[str, object] = {
+            "endpoint": self.accession,
+            "ancestry": self.spec["ancestry"],
+            "raw_rows": self.stats["raw_rows"],
+            "chromosome_counts": json.dumps(dict(sorted(self.chrom_counts.items()))),
+            "direction_length_counts": json.dumps(dict(sorted(self.direction_lengths.items()))),
+            "expected_direction_width": self.spec["direction_width"],
+            "p_min": self.p_min,
+            "p_q01_sample": np.quantile(p_sample, 0.01) if len(p_sample) else np.nan,
+            "p_q25_sample": np.quantile(p_sample, 0.25) if len(p_sample) else np.nan,
+            "p_median_sample": np.quantile(p_sample, 0.5) if len(p_sample) else np.nan,
+            "p_q75_sample": np.quantile(p_sample, 0.75) if len(p_sample) else np.nan,
+            "p_q99_sample": np.quantile(p_sample, 0.99) if len(p_sample) else np.nan,
+            "p_max": self.p_max,
+            "beta_min": self.beta_min,
+            "beta_max": self.beta_max,
+            "se_min": self.se_min,
+            "se_max": self.se_max,
+            "eaf_min": self.eaf_min,
+            "eaf_max": self.eaf_max,
+            "n_min": self.n_min,
+            "n_median_sample": np.median(n_sample) if len(n_sample) else np.nan,
+            "n_max": self.n_max,
+        }
+        row.update(self.stats)
+        return row
+
+    def duplicate_table(self) -> pd.DataFrame:
+        columns = [
+            "endpoint", "event_type", "chromosome", "base_pair_location",
+            "allele_lo", "allele_hi", "records", "excluded_records",
+            "first_record", "second_record",
+        ]
+        return pd.DataFrame(self.duplicate_rows).reindex(columns=columns)
+
+    def locus_table(self) -> pd.DataFrame:
+        return pd.concat(self.locus_rows, ignore_index=True) if self.locus_rows else pd.DataFrame(columns=["endpoint", *REQUIRED])
+
+
+def gene_coverage(endpoint: str) -> pd.DataFrame:
+    genes = pd.read_csv(MAP / "gene_registry.tsv", sep="\t")
+    matched = np.zeros(len(genes), dtype=np.int64)
+    for chrom in range(1, 23):
+        p = np.load(ADAPTED / endpoint / f"chr{chrom:02d}_p.npy", mmap_mode="r")
+        gene_idx = np.load(MAP / f"chr{chrom:02d}_gene_index.npy", mmap_mode="r")
+        variant_idx = np.load(MAP / f"chr{chrom:02d}_variant_index.npy", mmap_mode="r")
+        present = np.isfinite(p[variant_idx])
+        if present.any():
+            matched += np.bincount(gene_idx[present], minlength=len(genes))
+    out = genes[["gene", "ensg", "chr", "nsnps_cis"]].copy()
+    out.insert(0, "endpoint", endpoint)
+    out = out.rename(columns={"nsnps_cis": "frozen_snp_gene_records"})
+    out["matched_snp_gene_records"] = matched
+    out["mapping_fraction"] = matched / out["frozen_snp_gene_records"]
+    out["evaluable"] = matched > 0
+    return out
+
+
+def crosscheck_loci(captured: pd.DataFrame) -> pd.DataFrame:
+    registry = pd.read_csv(REGISTRY, sep="\t")
+    rows = []
+    for endpoint, spec in ENDPOINTS.items():
+        q = captured[captured["endpoint"].eq(endpoint)].copy()
+        for locus in registry.itertuples(index=False):
+            found = q[q["rsid"].astype(str).eq(str(locus.lead_rsid))]
+            expected_p = float(getattr(locus, spec["paper_p_column"]))
+            if len(found) == 1:
+                r = found.iloc[0]
+                observed_p = float(r["p_value"])
+                coordinate_match = int(r["chromosome"]) == int(locus.chromosome) and int(r["base_pair_location"]) == int(locus.position_grch38)
+                allele_match = str(r["effect_allele"]).upper() == str(locus.effect_allele).upper() and str(r["other_allele"]).upper() == str(locus.other_allele).upper()
+                relative_error = abs(observed_p - expected_p) / expected_p if expected_p > 0 else np.nan
+                p_match = bool(relative_error <= 0.015 or abs(observed_p - expected_p) <= 1e-300)
+                status = "pass" if coordinate_match and allele_match and p_match else "fail"
+            else:
+                observed_p = np.nan
+                relative_error = np.nan
+                coordinate_match = allele_match = p_match = False
+                status = "missing" if len(found) == 0 else "duplicate"
+            rows.append(
+                {
+                    "endpoint": endpoint,
+                    "locus_id": locus.locus_id,
+                    "lead_rsid": locus.lead_rsid,
+                    "records_found": len(found),
+                    "coordinate_match": coordinate_match,
+                    "oriented_effect_other_alleles_match": allele_match,
+                    "paper_rounded_p": expected_p,
+                    "raw_endpoint_p": observed_p,
+                    "relative_p_error": relative_error,
+                    "rounded_p_match": p_match,
+                    "status": status,
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+def write_outputs(scans: list[EndpointScan]) -> None:
+    variant = pd.DataFrame([scan.summary_row() for scan in scans])
+    variant.to_csv(QC / "variant_qc_by_endpoint.tsv", sep="\t", index=False, float_format="%.12g")
+    duplicate = pd.concat([scan.duplicate_table() for scan in scans], ignore_index=True)
+    duplicate.to_csv(QC / "duplicate_conflict_registry.tsv", sep="\t", index=False)
+    captured = pd.concat([scan.locus_table() for scan in scans], ignore_index=True)
+    locus = crosscheck_loci(captured)
+    locus.to_csv(QC / "fifteen_locus_endpoint_crosscheck.tsv", sep="\t", index=False, float_format="%.12g")
+    coverage = pd.concat([gene_coverage(scan.accession) for scan in scans], ignore_index=True)
+    coverage.to_csv(QC / "gene_mapping_coverage.tsv", sep="\t", index=False, float_format="%.12g")
+
+    build_rows = []
+    for scan in scans:
+        s = scan.stats
+        position = s["broadaway_position_overlap_rows"]
+        allele = s["broadaway_allele_match_rows"]
+        valid = s["valid_autosomal_coordinate_rows"]
+        mapped = s["liftover_mapped_rows"]
+        cov = coverage[coverage.endpoint.eq(scan.accession)]
+        build_rows.append(
+            {
+                "endpoint": scan.accession,
+                "source_build": "GRCh38",
+                "target_build": "GRCh37",
+                "liftover_contract": "frozen same-chromosome plus-strand UCSC hg38ToHg19 chain blocks",
+                "valid_autosomal_coordinate_rows": valid,
+                "liftover_mapped_rows": mapped,
+                "liftover_mapping_fraction": mapped / valid if valid else np.nan,
+                "broadaway_position_overlap_rows": position,
+                "broadaway_allele_match_rows": allele,
+                "allele_match_fraction_given_position": allele / position if position else np.nan,
+                "broadaway_allele_mismatch_rows": s["broadaway_allele_mismatch_rows"],
+                "palindromic_position_overlap_rows": s["palindromic_position_overlap_rows"],
+                "standardized_unique_broadaway_variants": s["standardized_broadaway_variants"],
+                "evaluable_genes": int(cov["evaluable"].sum()),
+                "median_gene_mapping_fraction": float(cov["mapping_fraction"].median()),
+                "minimum_gene_mapping_fraction": float(cov["mapping_fraction"].min()),
+            }
+        )
+    build = pd.DataFrame(build_rows)
+    build.to_csv(QC / "build_and_allele_audit.tsv", sep="\t", index=False, float_format="%.12g")
+
+    lines = [
+        "# Primary 2026 HCC endpoint QC report", "",
+        f"Generated: {datetime.now(timezone.utc).isoformat()}", "",
+        "This report covers the author-deposited raw EUR and EAS METAL files. No gene-level ACAT result was calculated in this stage.", "",
+    ]
+    hard_passes = []
+    for scan in scans:
+        row = variant[variant.endpoint.eq(scan.accession)].iloc[0]
+        lq = locus[locus.endpoint.eq(scan.accession)]
+        b = build[build.endpoint.eq(scan.accession)].iloc[0]
+        p_contract = int(row.get("p_outside_zero_one_rows", 0)) == 0 and int(row.get("nonfinite_p_value_rows", 0)) == 0
+        effect_contract = len(lq) == 15 and lq.status.eq("pass").all()
+        duplicate_complete = int(row.get("coordinate_order_regressions", 0)) == 0
+        direction_contract = set(json.loads(row["direction_length_counts"]).keys()) == {str(scan.spec["direction_width"])}
+        hard = p_contract and effect_contract and duplicate_complete and direction_contract
+        hard_passes.append(hard)
+        lines.extend(
+            [
+                f"## {scan.accession} ({scan.spec['ancestry']})", "",
+                f"- Raw rows: {int(row.raw_rows):,}; P range: {row.p_min:.4g} to {row.p_max:.4g}; sampled median P: {row.p_median_sample:.4g}.",
+                f"- P contract: {'PASS' if p_contract else 'FAIL'}; P=0 rows use the frozen 1e-300 floor ({int(row.get('p_equal_zero_rows', 0)):,} rows).",
+                f"- Duplicate audit: {'complete' if duplicate_complete else 'incomplete'}; coordinate-order regressions: {int(row.get('coordinate_order_regressions', 0)):,}; conflicting variant keys excluded: {int(row.get('conflicting_duplicate_variant_keys', 0)):,}.",
+                f"- Direction width: expected {scan.spec['direction_width']}; observed {row.direction_length_counts}; status {'PASS' if direction_contract else 'FAIL'}.",
+                f"- GRCh38→GRCh37 mapping: {b.liftover_mapping_fraction:.3%}; Broadaway allele agreement conditional on position overlap: {b.allele_match_fraction_given_position:.3%}.",
+                f"- Frozen-map coverage: {int(b.standardized_unique_broadaway_variants):,} unique variants; {int(b.evaluable_genes):,}/18,321 evaluable genes; median per-gene match fraction {b.median_gene_mapping_fraction:.3%}.",
+                f"- Published 15-locus coordinate/oriented-allele/rounded-P cross-check: {int(lq.status.eq('pass').sum())}/15 PASS; effect-allele contract {'PASS' if effect_contract else 'FAIL'}.",
+                f"- Deposited `n` exceeds the final paper design total on {int(row.get('n_exceeds_published_design_total_rows', 0)):,} rows. It is retained as author-deposited per-variant metadata but is not used as the case-control design N; paper cases/controls determine coloc N and s.",
+                "",
+            ]
+        )
+    lines.extend(
+        [
+            "## Gate disposition", "",
+            "Automated hard-contract status: " + ("PASS" if all(hard_passes) else "FAIL"),
+            "",
+            "Mapping-loss severity remains an explicit review item rather than an outcome-tuned numeric threshold. The final first-batch gate is written separately after comparison with legacy coverage and inspection of all audit tables.",
+            "",
+        ]
+    )
+    (QC / "qc_report.md").write_text("\n".join(lines))
+
+
+def main() -> None:
+    status = json.loads((MAP / "SUCCESS.json").read_text())
+    if status.get("status") != "complete" or status.get("frozen_gene_snp_records") != 96_571_536:
+        raise RuntimeError("Frozen Broadaway map cache is not complete")
+    chain = SameChromosomeChainMap(CHAIN)
+    scans = []
+    for accession, spec in ENDPOINTS.items():
+        print(f"Scanning {accession} ({spec['ancestry']})", flush=True)
+        scan = EndpointScan(accession, spec, chain)
+        scan.run()
+        scans.append(scan)
+        print(f"Completed raw scan for {accession}: {scan.stats['raw_rows']:,} rows", flush=True)
+    write_outputs(scans)
+    print("Wrote primary endpoint QC tables; final mapping-loss gate still requires review", flush=True)
+
+
+if __name__ == "__main__":
+    main()

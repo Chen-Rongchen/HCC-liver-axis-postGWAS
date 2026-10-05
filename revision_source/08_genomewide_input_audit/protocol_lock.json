@@ -1,0 +1,6 @@
+{
+  "protocol": "analysis_signal_resolution_c/08_genomewide_input_audit/PROTOCOL.txt",
+  "sha256": "7b82502d4c68066be4ea378750966941d09b04281ab0782ed118322f27a26dc5",
+  "known_results": "existing manuscript, C0/C1, regional 6097-key bridge, code correction review",
+  "new_raw_genomewide_scan_started": false
+}

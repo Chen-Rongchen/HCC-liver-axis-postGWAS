@@ -1,0 +1,900 @@
+#!/usr/bin/env python3
+"""
+ACAT-based genome-wide gene-level association analysis — 9-trait version.
+
+Rebuilds the primary ACAT matrix using a unified Broadaway cis-eQTL gene-SNP
+universe across 9 liver traits + 2 HCC ancestries.
+
+New traits added (vs 4-trait baseline):
+  AST, LIVER_FAT, legacy EHR-defined NAFLD, BILI (bilirubin), PBC
+
+Primary coordinate handling:
+  - all nine non-HCC traits and both HCC endpoints use GRCh37 coordinates;
+  - seven official GWAS Catalog native-GRCh37 files are checksum-verified;
+  - the rsID-to-1000G conversion is retained only as a separately named
+    sensitivity mode.
+
+Output:
+  result/08_evidence_completion/acat_native_grch37_primary/
+"""
+
+import argparse
+import copy
+import gzip
+import hashlib
+import json
+import math
+import os
+import statistics
+import sys
+from datetime import datetime, timezone
+from collections import defaultdict
+from pathlib import Path
+
+# Optional scipy for Z->P conversion
+try:
+    from scipy import stats
+    HAS_SCIPY = True
+except ImportError:
+    HAS_SCIPY = False
+    print("WARNING: scipy not available, AST Z->P will use approximation", file=sys.stderr)
+
+# ============================================================
+# Configuration
+# ============================================================
+
+PROJECT_ROOT = Path(os.environ.get("COMORBIDITY_PROJECT_ROOT", Path(__file__).resolve().parents[2])).resolve()
+
+
+def project_path(relative: str) -> str:
+    return str(PROJECT_ROOT / relative)
+
+
+BROADAWAY_DIR = project_path("data/phaseB/broadaway2024_liver_eqtl/Marginal_byChr")
+PRIMARY_OUTPUT_DIR = project_path(
+    "result/08_evidence_completion/acat_native_grch37_primary"
+)
+SENSITIVITY_OUTPUT_DIR = project_path(
+    "result/08_evidence_completion/acat_rsid_1kg_grch37_sensitivity"
+)
+PLINK_BIM_DIR = project_path("data/reference/ldsc/1000G_EUR_Phase3_plink")
+NATIVE_GRCH37_DIR = project_path("data/reference/gwas/grch37_primary")
+
+OFFICIAL_NATIVE_MD5 = {
+    "CIRR": "5373ab86b4db9af8a12d171b9bcdd47d",
+    "LIVER_FAT": "ec9df818c125b996e0adc7d0de680428",
+    "NAFLD": "a14b72b76813895ca30bc08db2578fc9",
+    "ALT": "e336a935e9eac1509060a1cfd18c60f6",
+    "GGT": "c6afc64830cddcd1f81a58bb0c3443f5",
+    "ALP": "9c44da294a34859ee1665447f3b58d67",
+    "BILI": "c3c80860f2ce0ab43f3123b119e1bd2f",
+    "PBC": "c48ede08359f6fc919810591cc0daad7",
+}
+
+# Primary 9 liver traits + 2 HCC
+GWAS_CONFIG = {
+    # G1: metabolic-fibrotic
+    "CIRR": {
+        "path": os.path.join(NATIVE_GRCH37_DIR, "GCST90319877.tsv"),
+        "chr_col": "chromosome",
+        "pos_col": "base_pair_location",
+        "p_col": "p_value",
+        "ea_col": "effect_allele",
+        "nea_col": "other_allele",
+        "n_col": "samplesize",
+        "sep": "\t",
+        "skip_rows": 0,
+        "n_fixed": None,
+        "format": "standard",
+        "coordinate_source": "native_grch37_position",
+    },
+    "LIVER_FAT": {
+        "path": project_path("data/reference/gwas/liu2021/GCST90016673_buildGRCh37.tsv.gz"),
+        "chr_col": "chromosome",
+        "pos_col": "base_pair_location",
+        "p_col": "p_value",
+        "ea_col": "effect_allele",
+        "nea_col": "other_allele",
+        "n_col": None,
+        "sep": "\t",
+        "skip_rows": 0,
+        "n_fixed": 32858,  # GCST90016673 official metadata
+        "format": "standard",
+    },
+    "NAFLD": {
+        "path": os.path.join(NATIVE_GRCH37_DIR, "GCST90091033_buildGRCh37.tsv.gz"),
+        "chr_col": "chromosome",
+        "pos_col": "base_pair_location",
+        "p_col": "p_value",
+        "ea_col": "effect_allele",
+        "nea_col": "other_allele",
+        "n_col": None,
+        "sep": "\t",
+        "skip_rows": 0,
+        "n_fixed": 778614,  # GCST90091033: 8,434 cases + 770,180 controls
+        "format": "standard",
+        "coordinate_source": "native_grch37_position",
+    },
+    # G2: hepatocellular injury
+    "ALT": {
+        "path": os.path.join(NATIVE_GRCH37_DIR, "GCST90013405_buildGRCh37.tsv"),
+        "chr_col": "chromosome",
+        "pos_col": "base_pair_location",
+        "p_col": "p_value",
+        "ea_col": "effect_allele",
+        "nea_col": "other_allele",
+        "n_col": None,
+        "sep": "\t",
+        "skip_rows": 0,
+        "n_fixed": 437267,  # Pazoki et al. phenotype-specific analyzed N
+        "format": "standard",
+        "coordinate_source": "native_grch37_position",
+    },
+    "AST": {
+        "path": os.environ.get(
+            "AST_GWAS_PATH",
+            project_path("data/reference/gwas/external/opengwas/ukb-d-30650_irnt/ukb-d-30650_irnt.vcf.gz"),
+        ),
+        "chr_col": None,
+        "pos_col": None,
+        "p_col": None,  # Computed from Z
+        "ea_col": None,
+        "nea_col": None,
+        "n_col": None,
+        "sep": "\t",
+        "skip_rows": 0,
+        "n_fixed": 342990,  # OpenGWAS VCF SS field
+        "format": os.environ.get("AST_GWAS_FORMAT", "opengwas_vcf"),
+        "z_col": "Z",
+        "rsid_col": "SNP",
+    },
+    "GGT": {
+        "path": os.path.join(NATIVE_GRCH37_DIR, "GCST90013407_buildGRCh37.tsv"),
+        "chr_col": "chromosome",
+        "pos_col": "base_pair_location",
+        "p_col": "p_value",
+        "ea_col": "effect_allele",
+        "nea_col": "other_allele",
+        "n_col": None,
+        "sep": "\t",
+        "skip_rows": 0,
+        "n_fixed": 437194,  # Pazoki et al. phenotype-specific analyzed N
+        "format": "standard",
+        "coordinate_source": "native_grch37_position",
+    },
+    # G3: cholestatic-autoimmune
+    "ALP": {
+        "path": os.path.join(NATIVE_GRCH37_DIR, "GCST90013406_buildGRCh37.tsv"),
+        "chr_col": "chromosome",
+        "pos_col": "base_pair_location",
+        "p_col": "p_value",
+        "ea_col": "effect_allele",
+        "nea_col": "other_allele",
+        "n_col": None,
+        "sep": "\t",
+        "skip_rows": 0,
+        "n_fixed": 437438,  # Pazoki et al. phenotype-specific analyzed N
+        "format": "standard",
+        "coordinate_source": "native_grch37_position",
+    },
+    "BILI": {
+        "path": os.path.join(NATIVE_GRCH37_DIR, "GCST90018973_buildGRCh37.tsv.gz"),
+        "chr_col": "chromosome",
+        "pos_col": "base_pair_location",
+        "p_col": "p_value",
+        "ea_col": "effect_allele",
+        "nea_col": "other_allele",
+        "n_col": None,
+        "sep": "\t",
+        "skip_rows": 0,
+        "n_fixed": 342829,
+        "format": "standard",
+        "coordinate_source": "native_grch37_position",
+    },
+    "PBC": {
+        "path": os.path.join(NATIVE_GRCH37_DIR, "GCST90061440_buildGRCh37.tsv"),
+        "chr_col": "chromosome",
+        "pos_col": "base_pair_location",
+        "p_col": "p_value",
+        "ea_col": "effect_allele",
+        "nea_col": "other_allele",
+        "n_col": None,
+        "sep": "\t",
+        "skip_rows": 0,
+        "n_fixed": 24510,
+        "format": "standard",
+        "coordinate_source": "native_grch37_position",
+    },
+    # HCC (external alignment endpoint)
+    "HCC_EUR": {
+        "path": project_path("data/reference/gwas/pheweb_hcc/hum0197.v3.EUR.LiC.v1/GWASsummary_HepC_EUR_SakaueKanai2020.auto.rsid.tsv.gz"),
+        "chr_col": "CHR",
+        "pos_col": "POS",
+        "p_col": "P",
+        "ea_col": "EA",
+        "nea_col": "NEA",
+        "n_col": "N",
+        "sep": "\t",
+        "skip_rows": 0,
+        "n_fixed": None,
+        "format": "standard",
+    },
+    "HCC_BBJ": {
+        "path": project_path("data/reference/gwas/pheweb_hcc/hum0197.v3.BBJ.LiC.v1/GWASsummary_HepC_Japanese_SakaueKanai2020.auto.txt.gz"),
+        "chr_col": "CHR",
+        "pos_col": "POS",
+        "p_col": "p.value",
+        "ea_col": "Allele2",
+        "nea_col": "Allele1",
+        "n_col": "N",
+        "sep": "\t",
+        "skip_rows": 0,
+        "n_fixed": None,
+        "format": "standard",
+    },
+}
+
+RSID_SENSITIVITY_OVERRIDES = {
+    "CIRR": {
+        "path": project_path(
+            "data/reference/gwas/external/GCST90319877/GCST90319877.h.tsv.gz"
+        ),
+        "chr_col": "chromosome",
+        "pos_col": "base_pair_location",
+        "coordinate_source": "rsid_to_grch37",
+        "rsid_col": "rsid",
+    },
+    "NAFLD": {
+        "path": project_path(
+            "data/reference/gwas/external/GCST90091033/GCST90091033_NAFLD.h.tsv.gz"
+        ),
+        "chr_col": "hm_chrom",
+        "pos_col": "hm_pos",
+        "ea_col": "hm_effect_allele",
+        "nea_col": "hm_other_allele",
+        "coordinate_source": "rsid_to_grch37",
+        "rsid_col": "hm_rsid",
+    },
+    "ALT": {
+        "path": project_path(
+            "data/reference/gwas/external/GCST90013405/GCST90013405.h.tsv.gz"
+        ),
+        "coordinate_source": "rsid_to_grch37",
+        "rsid_col": "hm_rsid",
+    },
+    "ALP": {
+        "path": project_path(
+            "data/reference/gwas/external/GCST90013406/GCST90013406.h.tsv.gz"
+        ),
+        "coordinate_source": "rsid_to_grch37",
+        "rsid_col": "rsid",
+    },
+    "BILI": {
+        "path": project_path(
+            "data/reference/gwas/external/bilirubin/GCST90018973.h.tsv.gz"
+        ),
+        "coordinate_source": "rsid_to_grch37",
+        "rsid_col": "rsid",
+    },
+}
+
+
+def configured_gwas(analysis_mode):
+    config = copy.deepcopy(GWAS_CONFIG)
+    if analysis_mode == "rsid_1kg_grch37_sensitivity":
+        for trait, overrides in RSID_SENSITIVITY_OVERRIDES.items():
+            config[trait].update(overrides)
+    return config
+
+# ============================================================
+# ACAT implementation
+# ============================================================
+
+def acat(p_values, weights=None):
+    p_values = [
+        min(max(float(p), 1e-300), 1.0)
+        for p in p_values
+        if p is not None and math.isfinite(float(p)) and 0 <= float(p) <= 1
+    ]
+    if len(p_values) == 0:
+        return None
+    if len(p_values) == 1:
+        return p_values[0]
+
+    if weights is None:
+        weights = [1.0 / len(p_values)] * len(p_values)
+    else:
+        w_sum = sum(weights)
+        weights = [w / w_sum for w in weights]
+
+    t_values = []
+    for p, w in zip(p_values, weights):
+        if p >= 1.0:
+            t_values.append(0.0)
+        elif p <= 0.0:
+            t_values.append(math.tan((0.5 - 1e-16) * math.pi))
+        else:
+            t_values.append(math.tan((0.5 - p) * math.pi))
+
+    t_stat = sum(w * t for w, t in zip(weights, t_values))
+    p_acat = 0.5 - math.atan(t_stat) / math.pi
+    return max(p_acat, 1e-300)
+
+
+def z_to_p(z):
+    """Convert Z-score to two-tailed P-value."""
+    # erfc is the exact two-sided standard-normal tail identity and avoids
+    # millions of high-overhead scalar scipy calls for the AST input.
+    return math.erfc(abs(z) / math.sqrt(2.0))
+
+
+# ============================================================
+# Data loading
+# ============================================================
+
+def parse_chromosome(chrom_str):
+    chrom_str = str(chrom_str).strip().replace("chr", "").replace("CHR", "")
+    if chrom_str in ("X", "x", "23"):
+        return 23
+    if chrom_str in ("Y", "y", "24"):
+        return 24
+    if chrom_str in ("MT", "M", "mt", "m", "25"):
+        return 25
+    try:
+        return int(chrom_str)
+    except ValueError:
+        return None
+
+
+def build_rsid_map():
+    """Build rsID -> (chr, pos) from the local 1000 Genomes PLINK reference."""
+    print("Building rsID -> chr:pos mapping from 1000 Genomes BIM files...", file=sys.stderr)
+    rsid_map = {}
+    for chrom in range(1, 23):
+        src_path = os.path.join(PLINK_BIM_DIR, f"1000G.EUR.QC.{chrom}.bim")
+        with open(src_path) as f:
+            for line in f:
+                parts = line.split()
+                if len(parts) >= 4 and parts[1].startswith("rs"):
+                    rsid_map[parts[1]] = (chrom, int(parts[3]))
+
+    print(f"  Total unique rsID mappings: {len(rsid_map)}", file=sys.stderr)
+    return rsid_map
+
+
+def load_broadaway_gene_snp_map():
+    print("Loading Broadaway eQTL gene-SNP mapping...", file=sys.stderr)
+    gene_snps = defaultdict(list)
+    gene_info = {}
+
+    for chrom_num in range(1, 23):
+        fpath = os.path.join(BROADAWAY_DIR, f"Liver_eQTL_Meta_Analysis_20240305_CHR{chrom_num}.tsv")
+        if not os.path.exists(fpath):
+            print(f"  Missing: {fpath}", file=sys.stderr)
+            continue
+
+        print(f"  Processing chr{chrom_num}...", file=sys.stderr)
+        with open(fpath, "r") as f:
+            header = f.readline().strip().split("\t")
+            col_map = {col: i for i, col in enumerate(header)}
+            gene_col = col_map["GeneSymbol"]
+            ensg_col = col_map["ENSG"]
+            pos_col = col_map["POS"]
+            pval_col = col_map["PVAL"]
+
+            for line in f:
+                parts = line.strip().split("\t")
+                if len(parts) <= max(gene_col, ensg_col, pos_col, pval_col):
+                    continue
+
+                gene = parts[gene_col]
+                ensg = parts[ensg_col]
+                pos = parts[pos_col]
+                p_eqtl_str = parts[pval_col]
+
+                try:
+                    p_eqtl = float(p_eqtl_str)
+                    pos_int = int(pos)
+                except (ValueError, IndexError):
+                    continue
+
+                gene_snps[gene].append((chrom_num, pos_int, p_eqtl))
+                if gene not in gene_info:
+                    gene_info[gene] = {"ensg": ensg, "chr": chrom_num}
+
+    print(f"  Loaded {len(gene_snps)} genes with eQTL SNP data", file=sys.stderr)
+    return gene_snps, gene_info
+
+
+def load_gwas_snp_map(config, trait_name, rsid_map=None):
+    print(f"  Loading {trait_name} GWAS...", file=sys.stderr)
+    fpath = config["path"]
+    if not os.path.exists(fpath):
+        print(f"    File not found: {fpath}", file=sys.stderr)
+        return None
+
+    snp_map = {}
+    n_snps = 0
+    fmt = config.get("format", "standard")
+    open_func = gzip.open if fpath.endswith(".gz") else open
+
+    try:
+        f = open_func(fpath, "rt")
+        header = f.readline().strip().split(config["sep"])
+        col_map = {col: i for i, col in enumerate(header)}
+
+        if fmt == "opengwas_vcf":
+            for line in f:
+                if line.startswith("#"):
+                    continue
+                parts = line.rstrip("\n").split("\t")
+                if len(parts) < 10:
+                    continue
+                chrom = parse_chromosome(parts[0])
+                if chrom is None or chrom > 22:
+                    continue
+                try:
+                    pos = int(parts[1])
+                except ValueError:
+                    continue
+                fmt_keys = parts[8].split(":")
+                fmt_vals = parts[9].split(":")
+                fmt_map = dict(zip(fmt_keys, fmt_vals))
+                try:
+                    if "LP" in fmt_map and fmt_map["LP"] not in ("", "."):
+                        lp = float(fmt_map["LP"])
+                        p_val = max(10.0 ** (-lp), 1e-300)
+                    else:
+                        es = float(fmt_map["ES"])
+                        se = float(fmt_map["SE"])
+                        p_val = z_to_p(es / se)
+                    n_val = int(float(fmt_map["SS"])) if "SS" in fmt_map and fmt_map["SS"] not in ("", ".") else config.get("n_fixed")
+                except (ValueError, ZeroDivisionError):
+                    continue
+                key = (chrom, pos)
+                if key not in snp_map or p_val < snp_map[key]["p"]:
+                    snp_map[key] = {"p": p_val, "n": n_val}
+                n_snps += 1
+                if n_snps % 5000000 == 0:
+                    print(f"    Processed {n_snps} SNPs...", file=sys.stderr)
+
+        elif fmt == "zscore_rsid":
+            # AST special handling
+            z_col = col_map[config["z_col"]]
+            rsid_col = col_map[config["rsid_col"]]
+
+            for line in f:
+                parts = line.strip().split(config["sep"])
+                if len(parts) <= max(z_col, rsid_col):
+                    continue
+                rsid = parts[rsid_col]
+                if rsid not in rsid_map:
+                    continue
+                try:
+                    z_val = float(parts[z_col])
+                except ValueError:
+                    continue
+                p_val = z_to_p(z_val)
+                chrom, pos = rsid_map[rsid]
+                key = (chrom, pos)
+                if key not in snp_map or p_val < snp_map[key]["p"]:
+                    snp_map[key] = {"p": p_val, "n": config.get("n_fixed")}
+                n_snps += 1
+
+        else:
+            # Standard format
+            chr_col = col_map[config["chr_col"]]
+            pos_col = col_map[config["pos_col"]]
+            p_col = col_map[config["p_col"]]
+            coordinate_source = config.get("coordinate_source", "source_position")
+            rsid_col = (
+                col_map[config["rsid_col"]]
+                if coordinate_source == "rsid_to_grch37"
+                else None
+            )
+            has_n = config["n_col"] is not None and config["n_col"] in col_map
+            if has_n:
+                n_col = col_map[config["n_col"]]
+
+            for line in f:
+                parts = line.strip().split(config["sep"])
+                if len(parts) <= max(chr_col, pos_col, p_col):
+                    continue
+
+                try:
+                    raw_p = float(parts[p_col])
+                    if not math.isfinite(raw_p) or not 0 <= raw_p <= 1:
+                        continue
+                    p_val = max(raw_p, 1e-300)
+                except (ValueError, IndexError):
+                    continue
+                if has_n:
+                    try:
+                        raw_n = float(parts[n_col])
+                        n_val = int(raw_n) if math.isfinite(raw_n) and raw_n > 0 else config.get("n_fixed")
+                    except (ValueError, IndexError):
+                        n_val = config.get("n_fixed")
+                else:
+                    n_val = config.get("n_fixed")
+
+                if coordinate_source == "rsid_to_grch37":
+                    rsid = parts[rsid_col]
+                    if rsid_map is None or rsid not in rsid_map:
+                        continue
+                    chrom, pos = rsid_map[rsid]
+                else:
+                    chrom = parse_chromosome(parts[chr_col])
+                    if chrom is None or chrom > 22:
+                        continue
+                    try:
+                        pos = int(parts[pos_col])
+                    except (ValueError, IndexError):
+                        continue
+
+                key = (chrom, pos)
+                if key not in snp_map or p_val < snp_map[key]["p"]:
+                    snp_map[key] = {"p": p_val, "n": n_val}
+
+                n_snps += 1
+                if n_snps % 5000000 == 0:
+                    print(f"    Processed {n_snps} SNPs...", file=sys.stderr)
+
+    except EOFError:
+        print(f"    WARNING: Truncated gzip file for {trait_name}", file=sys.stderr)
+    finally:
+        try:
+            f.close()
+        except:
+            pass
+
+    print(f"    Loaded {len(snp_map)} unique SNP positions from {n_snps} total", file=sys.stderr)
+    return snp_map
+
+
+# ============================================================
+# Gene-level analysis
+# ============================================================
+
+def compute_gene_level_acat(gene_snps, gwas_snp_map, trait_name):
+    print(f"  Computing ACAT gene-level P-values for {trait_name}...", file=sys.stderr)
+    results = {}
+    n_genes_skipped = 0
+
+    for gene, snps in gene_snps.items():
+        p_values = []
+        n_values = []
+        eqtl_p_values = []
+
+        for chrom, pos, p_eqtl in snps:
+            key = (chrom, pos)
+            if key in gwas_snp_map:
+                p_values.append(gwas_snp_map[key]["p"])
+                if gwas_snp_map[key]["n"] is not None:
+                    n_values.append(gwas_snp_map[key]["n"])
+                eqtl_p_values.append(p_eqtl)
+
+        if len(p_values) == 0:
+            n_genes_skipped += 1
+            continue
+
+        acat_p = acat(p_values)
+        if acat_p is None:
+            n_genes_skipped += 1
+            continue
+
+        results[gene] = {
+            "nsnps_matched": len(p_values),
+            "nsnps_total": len(snps),
+            "acat_p": acat_p,
+            "min_p": min(p_values),
+            "max_n": max(n_values) if n_values else None,
+            "min_eqtl_p": min(eqtl_p_values) if eqtl_p_values else None,
+        }
+
+    print(f"    {len(results)} genes tested, {n_genes_skipped} genes skipped",
+          file=sys.stderr)
+    return results
+
+
+# ============================================================
+# Main
+# ============================================================
+
+def digest_file(path, algorithm):
+    digest = hashlib.new(algorithm)
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(8 * 1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def portable_path(path):
+    resolved = Path(path).resolve()
+    try:
+        return str(resolved.relative_to(PROJECT_ROOT))
+    except ValueError:
+        return resolved.name
+
+
+def build_run_fingerprint(analysis_mode, gwas_config):
+    input_records = {}
+    for trait, config in gwas_config.items():
+        path = Path(config["path"])
+        if not path.exists():
+            raise FileNotFoundError(f"{trait} input is missing: {path}")
+        input_records[trait] = {
+            "path": portable_path(path),
+            "size_bytes": path.stat().st_size,
+            "mtime_ns": path.stat().st_mtime_ns,
+            "coordinate_source": config.get("coordinate_source", "source_position"),
+            "chr_col": config.get("chr_col"),
+            "pos_col": config.get("pos_col"),
+            "p_col": config.get("p_col"),
+            "n_col": config.get("n_col"),
+            "n_fixed": config.get("n_fixed"),
+        }
+
+    if analysis_mode == "native_grch37_primary":
+        for trait, expected_md5 in OFFICIAL_NATIVE_MD5.items():
+            observed_md5 = digest_file(gwas_config[trait]["path"], "md5")
+            if observed_md5 != expected_md5:
+                raise RuntimeError(
+                    f"{trait} native GRCh37 MD5 mismatch: "
+                    f"expected {expected_md5}, observed {observed_md5}"
+                )
+            input_records[trait]["official_md5"] = observed_md5
+
+    broadaway_records = []
+    for chrom in range(1, 23):
+        path = Path(BROADAWAY_DIR) / (
+            f"Liver_eQTL_Meta_Analysis_20240305_CHR{chrom}.tsv"
+        )
+        if not path.exists():
+            raise FileNotFoundError(f"Broadaway mapping input is missing: {path}")
+        broadaway_records.append(
+            {
+                "path": portable_path(path),
+                "size_bytes": path.stat().st_size,
+                "mtime_ns": path.stat().st_mtime_ns,
+            }
+        )
+
+    payload = {
+        "analysis_mode": analysis_mode,
+        "analysis_build": "GRCh37",
+        "script_sha256": digest_file(__file__, "sha256"),
+        "inputs": input_records,
+        "broadaway_gene_snp_map": broadaway_records,
+    }
+    if analysis_mode == "rsid_1kg_grch37_sensitivity":
+        payload["rsid_reference"] = [
+            {
+                "path": portable_path(
+                    Path(PLINK_BIM_DIR) / f"1000G.EUR.QC.{chrom}.bim"
+                ),
+                "size_bytes": (
+                    Path(PLINK_BIM_DIR) / f"1000G.EUR.QC.{chrom}.bim"
+                ).stat().st_size,
+                "mtime_ns": (
+                    Path(PLINK_BIM_DIR) / f"1000G.EUR.QC.{chrom}.bim"
+                ).stat().st_mtime_ns,
+            }
+            for chrom in range(1, 23)
+        ]
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return payload, hashlib.sha256(canonical.encode()).hexdigest()
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Build the ACAT gene-by-trait matrix on a frozen GRCh37 gene-SNP map."
+    )
+    parser.add_argument(
+        "--analysis-mode",
+        choices=("native_grch37_primary", "rsid_1kg_grch37_sensitivity"),
+        default="native_grch37_primary",
+    )
+    parser.add_argument(
+        "--output-dir",
+        default=None,
+        help="Explicit output directory. Defaults to a mode-specific directory.",
+    )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Reuse per-trait caches only when the saved run fingerprint matches exactly.",
+    )
+    return parser.parse_args()
+
+
+def main():
+    args = parse_args()
+    gwas_config = configured_gwas(args.analysis_mode)
+    default_output = (
+        PRIMARY_OUTPUT_DIR
+        if args.analysis_mode == "native_grch37_primary"
+        else SENSITIVITY_OUTPUT_DIR
+    )
+    output_dir = str(
+        Path(
+            args.output_dir
+            or os.environ.get("ACAT_OUTPUT_DIR", default_output)
+        ).resolve()
+    )
+
+    fingerprint_payload, fingerprint = build_run_fingerprint(
+        args.analysis_mode, gwas_config
+    )
+    output_path_obj = Path(output_dir)
+    manifest_path = output_path_obj / "run_manifest.json"
+    success_path = output_path_obj / "SUCCESS.json"
+    if output_path_obj.exists() and any(output_path_obj.iterdir()):
+        if not args.resume:
+            raise RuntimeError(
+                f"Output directory is not empty: {output_path_obj}. "
+                "Use a fresh directory or --resume with an identical fingerprint."
+            )
+        if not manifest_path.exists():
+            raise RuntimeError(
+                f"Cannot resume without run_manifest.json: {output_path_obj}"
+            )
+        previous = json.loads(manifest_path.read_text())
+        if (
+            previous.get("analysis_mode") != args.analysis_mode
+            or previous.get("fingerprint") != fingerprint
+        ):
+            raise RuntimeError(
+                "Resume refused because the analysis mode or input fingerprint changed."
+            )
+    else:
+        output_path_obj.mkdir(parents=True, exist_ok=True)
+
+    run_manifest = {
+        **fingerprint_payload,
+        "fingerprint": fingerprint,
+        "status": "running",
+        "started_utc": datetime.now(timezone.utc).isoformat(),
+    }
+    manifest_path.write_text(json.dumps(run_manifest, indent=2, sort_keys=True) + "\n")
+    if success_path.exists():
+        success_path.unlink()
+
+    # The primary mode uses official native GRCh37 positions throughout.
+    # The separate sensitivity mode maps selected harmonized inputs by rsID
+    # to the 1000 Genomes EUR GRCh37 reference.
+    rsid_map = None
+    requires_rsid_map = any(
+        not os.path.exists(os.path.join(output_dir, f"acat_{trait}_9trait.tsv"))
+        and config.get("coordinate_source") == "rsid_to_grch37"
+        for trait, config in gwas_config.items()
+    )
+    if requires_rsid_map:
+        rsid_map = build_rsid_map()
+
+    # Load Broadaway mapping
+    gene_snps, gene_info = load_broadaway_gene_snp_map()
+
+    # Write gene SNP counts
+    gene_snp_count_path = os.path.join(output_dir, "gene_snp_counts_9trait.tsv")
+    with open(gene_snp_count_path, "w") as f:
+        f.write("gene\tchr\tensg\tnsnps_cis\n")
+        for gene, snps in gene_snps.items():
+            info = gene_info.get(gene, {})
+            f.write(f"{gene}\t{info.get('chr', 'NA')}\t{info.get('ensg', 'NA')}\t{len(snps)}\n")
+    print(f"Gene SNP counts written to {gene_snp_count_path}", file=sys.stderr)
+
+    # Process each trait
+    all_results = {}
+
+    for trait_name, config in gwas_config.items():
+        trait_out = os.path.join(output_dir, f"acat_{trait_name}_9trait.tsv")
+        if os.path.exists(trait_out):
+            print(f"\nLoading existing results for {trait_name} from {trait_out}", file=sys.stderr)
+            trait_results = {}
+            with open(trait_out, "r") as f:
+                h = f.readline().strip().split("\t")
+                for line in f:
+                    parts = line.strip().split("\t")
+                    if len(parts) >= 5:
+                        trait_results[parts[0]] = {
+                            "nsnps_matched": int(parts[1]),
+                            "nsnps_total": int(parts[2]),
+                            "acat_p": float(parts[3]),
+                            "min_p": float(parts[4]),
+                            "max_n": int(parts[5]) if parts[5] != "None" else None,
+                            "min_eqtl_p": float(parts[6]) if len(parts) > 6 and parts[6] != "None" else None,
+                        }
+            all_results[trait_name] = trait_results
+            continue
+
+        print(f"\n{'='*60}", file=sys.stderr)
+        print(f"Processing {trait_name}", file=sys.stderr)
+        print(f"{'='*60}", file=sys.stderr)
+
+        gwas_snp_map = load_gwas_snp_map(config, trait_name, rsid_map=rsid_map)
+        if gwas_snp_map is None:
+            continue
+
+        trait_results = compute_gene_level_acat(gene_snps, gwas_snp_map, trait_name)
+        all_results[trait_name] = trait_results
+
+        with open(trait_out, "w") as f:
+            f.write("gene\tnsnps_matched\tnsnps_total\tacat_p\tmin_p\tmax_n\tmin_eqtl_p\n")
+            for gene, r in trait_results.items():
+                f.write(f"{gene}\t{r['nsnps_matched']}\t{r['nsnps_total']}\t"
+                        f"{r['acat_p']}\t{r['min_p']}\t{r['max_n']}\t{r['min_eqtl_p']}\n")
+        print(f"  Intermediate results saved to {trait_out}", file=sys.stderr)
+
+        del gwas_snp_map
+
+    # Build gene x trait matrix
+    print(f"\n{'='*60}", file=sys.stderr)
+    print("Building gene x trait matrix...", file=sys.stderr)
+
+    all_genes = set()
+    for trait_results in all_results.values():
+        all_genes.update(trait_results.keys())
+
+    output_path = os.path.join(output_dir, "gene_trait_acat_matrix_9trait.tsv")
+    with open(output_path, "w") as f:
+        traits = list(gwas_config.keys())
+        header_cols = ["gene", "chr", "ensg"]
+        for t in traits:
+            header_cols.extend([f"{t}_nsnps", f"{t}_acat_p", f"{t}_min_p"])
+        f.write("\t".join(header_cols) + "\n")
+
+        for gene in sorted(all_genes):
+            info = gene_info.get(gene, {"chr": "NA", "ensg": "NA"})
+            row = [gene, str(info.get("chr", "NA")), info.get("ensg", "NA")]
+            for t in traits:
+                if gene in all_results.get(t, {}):
+                    r = all_results[t][gene]
+                    row.extend([str(r["nsnps_matched"]), str(r["acat_p"]), str(r["min_p"])])
+                else:
+                    row.extend(["NA", "NA", "NA"])
+            f.write("\t".join(row) + "\n")
+
+    print(f"\nGene x trait matrix written to {output_path}", file=sys.stderr)
+    print(f"Genes in matrix: {len(all_genes)}", file=sys.stderr)
+    print(f"Traits: {len(traits)}", file=sys.stderr)
+
+    for trait in traits:
+        if trait not in all_results:
+            continue
+        p_vals = [r["acat_p"] for r in all_results[trait].values()]
+        n_sig = sum(1 for p in p_vals if p < 0.05)
+        n_bonf = sum(1 for p in p_vals if p < 0.05 / len(p_vals))
+        print(f"  {trait}: {len(p_vals)} genes, {n_sig} P<0.05, {n_bonf} Bonferroni",
+              file=sys.stderr)
+
+    coverage = {}
+    for trait, trait_results in all_results.items():
+        fractions = [
+            result["nsnps_matched"] / result["nsnps_total"]
+            for result in trait_results.values()
+            if result["nsnps_total"] > 0
+        ]
+        coverage[trait] = {
+            "tested_genes": len(trait_results),
+            "median_snp_match_fraction": (
+                statistics.median(fractions) if fractions else None
+            ),
+        }
+
+    success = {
+        "analysis_mode": args.analysis_mode,
+        "analysis_build": "GRCh37",
+        "fingerprint": fingerprint,
+        "completed_utc": datetime.now(timezone.utc).isoformat(),
+        "matrix_path": portable_path(output_path),
+        "matrix_sha256": digest_file(output_path, "sha256"),
+        "trait_coverage": coverage,
+    }
+    success_path.write_text(json.dumps(success, indent=2, sort_keys=True) + "\n")
+    run_manifest["status"] = "complete"
+    run_manifest["completed_utc"] = success["completed_utc"]
+    manifest_path.write_text(json.dumps(run_manifest, indent=2, sort_keys=True) + "\n")
+
+
+if __name__ == "__main__":
+    main()

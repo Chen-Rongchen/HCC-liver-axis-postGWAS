@@ -1,0 +1,11 @@
+{
+  "created_utc": "2026-09-28T17:15:24.247804+00:00",
+  "HCC_loaded": false,
+  "scope": "post_result_amendment_not_prospective_registration",
+  "hashes": {
+    "charter.md": "b3739b6d5c77ba78a8c8536ffa538f5dc66057afeb6f8d3666b7a5a075fa9186",
+    "liver_only_model_settings.json": "f6e856ff3da1d83cf27827be7b94cba2624ef02892140bef81a6fdc4ce80f617",
+    "boundary_liver_only_population.tsv": "d178e5780e72ead43b2a68b4e3eef5b163de93b9999d3755d396434e8d16f7fb",
+    "neutral_liver_only_population.tsv": "373b5ac6079c56792a4f78c1d61ad0ce304895863b8f93cfc10b65dde62e2cdc"
+  }
+}

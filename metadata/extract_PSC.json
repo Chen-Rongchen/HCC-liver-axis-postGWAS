@@ -1,0 +1,18 @@
+{
+  "trait": "PSC",
+  "path": "data/reference/gwas/external/PSC/ipscsg2016.result.combined.full.with_header.txt.gz",
+  "sha256": "d9b281d90e7b61bc516af89a57dd59e63825346b17d537e968f700bdb44f5e05",
+  "counts": {
+    "raw_rows": 7891602,
+    "target_valid_rows": 71342
+  },
+  "coordinate_keys": 71342,
+  "actual_variant_keys": 71342,
+  "allele_status_counts": {
+    "exact_unordered_pair": 71188,
+    "literal_pair_mismatch_or_missing": 154
+  },
+  "replay_genes": 283,
+  "all_replays_passed": true,
+  "script_sha256": "2509d70ad8b5ad453c89c701566b138905ab55e3a4e6d017029f1e173b9731d5"
+}

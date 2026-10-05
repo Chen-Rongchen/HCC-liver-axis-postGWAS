@@ -1,0 +1,20 @@
+{
+  "trait": "PBC",
+  "started_utc": "2026-09-28T12:37:16.192322+00:00",
+  "completed_utc": "2026-09-28T12:38:24.143919+00:00",
+  "input_path": "data/reference/gwas/grch37_primary/GCST90061440_buildGRCh37.tsv",
+  "input_sha256": "439aa72c59b876236de2b8172c443a447cefa6868ace535183cec8b758a05921",
+  "saved_gene_source": "result/08_evidence_completion/acat_native_grch37_primary/acat_PBC_9trait.tsv",
+  "saved_gene_sha256": "9772a93d118392def521c6698f533d4d08e14028b120258467ebc625d88d7e33",
+  "script_sha256": "167923267acd940a40ae644e5e74173b97ce3ea2f14d8e82ae1827579ba52aae",
+  "n_genes": 18321,
+  "n_evaluable": 18317,
+  "legacy_replay_passed": true,
+  "raw_adapter_audit": {},
+  "method": "exact_P1_to_1_minus_1_over_d_sensitivity",
+  "primary_replaced": false,
+  "HCC_loaded": false,
+  "driver_sha256": "509635770e669edbaadfa92de1580e222829dd6a474f4fe1b2d7f88a8ba99184",
+  "charter_sha256": "627473e3941fc96d87a3ecb5bb40a1a5087d75e2f3af018c1828efba3542cbb9",
+  "nonboundary_unchanged": true
+}

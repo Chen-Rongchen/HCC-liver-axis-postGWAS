@@ -1,0 +1,33 @@
+# Final computational convention and finite reanalysis amendment
+
+This is a post-result, post-numerical-audit amendment, not prospective registration or HCC-blinded design. The author's historical HCC results and stages 21–27 are known. The amendment is hashed before this directory computes new HCC scores or fits outcomes. Original analyses, submission files and failed matching decisions remain unchanged.
+
+## Scoring decision
+
+Use the numerically stable equal-weight Cauchy aggregation with exact input P=1 replaced by 1−1/d when d>1, where d is the actual valid mapped-SNP record count. A single input retains its value. Use stable cotangent/atan2 evaluation; retain the existing P=0 lower numerical bound. Apply the SAME convention to all liver and both HCC endpoints. Reuse stage 25 liver outputs, verified against their manifests. This author-FAQ heuristic is adopted as a computational RANK-SCORE convention, not recovery of unrounded source P values and not a demonstrated calibrated gene-level P-value test. Do not perform gene-score FDR or gene discovery from its raw magnitudes. Recompute ancestry-specific average ranks over all evaluable genes and inverse-normal evidence. Use stable P=1-neutral scoring, including its corresponding liver nomination, as one complete sensitivity branch. Do not choose branches according to HCC results.
+
+Source: https://github.com/yaowuliu/ACAT ; retained source snapshot in stage 24. The unknown cause of all source P=1 values remains unknown.
+
+## Fixed population and estimands
+
+Preserve 18321 gene-map universe and 56 seed identities. Rebuild nomination and breadth from corrected liver ranks; do not retain obsolete 5562/670 counts. Primary current scoring does not retroactively alter the old frozen record.
+
+Overall context: non-seed nominees versus non-seed background, continuous HCC rank evidence, plus descriptive top-5% contingency. Covariate-adjusted comparison uses complete length, cis-SNP count and adjacent-liver expression; does not control peak liver strength, which helps define nomination.
+
+Conditional breadth reanalysis: B≥4 versus B=1–3 among non-seed liver nominees in liver-only S quintiles 4 and 5, with complete covariates. Before HCC loading, restrict each stratum to the intersection of the two groups' marginal ranges on S, log(length), log1p(cis-SNP count) and log1p(adjacent expression), computed once, not iterated. This is a limited observed-support population, NOT proof of joint positivity or exchangeability. Report retained groups and blocks. All M0/M1/M2/M3 fits within an ancestry use the identical HCC-evaluable, block-assigned sample. Continuous Y is ranked before subsetting.
+
+M0: Y~high. M1: +S+S-quintile indicator. M2: +log length+log1p SNP count+log1p expression. M3 sensitivity: replace linear S and log1p SNP count with four-knot restricted cubic splines at liver-only sample quantiles .05/.35/.65/.95. Knots and transforms are fixed before HCC loading. Model coefficients are conditional associations; attenuation is not biological mediation. No new common-support pass threshold is invented.
+
+Finite additional checks: M3 with equal total weight per LD block (a different block-balanced target); M3 restricted to the shared EUR/EAS evaluable population; M3 separately in S4 and S5; M3 excluding B≥7; descriptive B-level distributions (no adjacent-level testing). Do not scan cutpoints. Leave-one-block-out M3 for both ancestries and 1000 block bootstrap draws for M2/M3, seed 20260929. Ancestry-specific published block boundaries define clustering, not individual-level LD validation. Report t-based cluster intervals, bootstrap failures and pointwise exploratory uncertainty, not selection-adjusted confirmation.
+
+## Residual matching decision
+
+Stage 27 matching remains FAILED under its own distribution-balance gate. No rematching/caliper/replacement tuning. Inspect actual count differences and regional concentration. As an explicitly NON-VALIDATING diagnostic only, estimate unadjusted, linear-adjusted and spline-adjusted associations in its fixed retained genes and quantify mean fitted covariate contributions. This tests model sensitivity, not whether exchangeability is established. Agreement cannot prove absence of residual confounding; disagreement limits the claim. Do not label this a passed matched-null analysis. No exchangeability-based permutation P values will be manufactured.
+
+## Candidate evidence
+
+Rebuild the non-seed B≥4 AND EUR top-5% list from current boundary scores (with EAS scores alongside), independently of complete-X restriction. It is an outcome-selected mapping/context list, not discovered susceptibility genes. Reuse stage 21 gene-specific evidence only by exact gene key; retain lookup scope/date and distinguish unchecked new entries. For newly entering genes, perform bounded HCC literature/resource checks with source/query logs. Recompute strongest mapped SNP sets and identical-input groups for every candidate; strongest-SNP groups are NOT independent loci. Report regional concentration, known literature, unresolved gene attribution and whether any gene has new independent gene-specific evidence. Do not promote missing literature hits to novelty. Do not rerun colocalization, acquire new raw datasets, publish to GitHub, or edit manuscript/figures in this amendment.
+
+## Completion and stopping
+
+Deliver scoring decision, residual-balance interpretation, EUR/EAS estimates with ancestry/block scope, updated candidate ledger and a short scientific decision report; archive code/input hashes, validation and a compact ZIP. Finish this finite list whether effects are positive, null or imprecise. Do not open another sensitivity cycle to obtain significance. Submission remains untouched; readiness must be adjudicated from actual results, not assumed.

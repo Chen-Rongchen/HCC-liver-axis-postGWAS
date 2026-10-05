@@ -1,0 +1,402 @@
+#!/usr/bin/env python3
+"""Non-HCC gene-level nomination eligibility audit for PSC and AIH.
+
+This script deliberately reads no HCC input or HCC-derived table. It applies
+the same frozen GRCh37 Broadaway gene-SNP map and the pre-existing technical
+coverage gates used for the nine current nomination traits. Case count, LDSC
+estimability and prespecified group size are reported but are not eligibility
+gates.
+"""
+
+from __future__ import annotations
+
+import argparse
+import csv
+import gzip
+import hashlib
+import importlib.util
+import json
+import math
+import os
+from datetime import datetime, timezone
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+
+
+ROOT = Path(
+    os.environ.get("COMORBIDITY_PROJECT_ROOT", Path(__file__).resolve().parents[2])
+).resolve()
+OUT = ROOT / "result" / "17_trait_eligibility"
+CRITERIA = ROOT / "config" / "nomination_trait_eligibility_criteria.tsv"
+METADATA = ROOT / "config" / "trait_source_metadata_registry.tsv"
+ACAT_MODULE_PATH = (
+    ROOT
+    / "scripts"
+    / "02_gene_level_liver_axis_nomination"
+    / "02_rerun_acat_9trait.py"
+)
+FROZEN_GENE_UNIVERSE = 18321
+
+TRAITS = {
+    "PSC": {
+        "path": (
+            ROOT
+            / "data/reference/gwas/external/PSC"
+            / "ipscsg2016.result.combined.full.with_header.txt.gz"
+        ),
+        "accession": "GCST004030",
+        "chromosome": "chr",
+        "position": "pos",
+        "p_value": "p",
+        "effect_allele": "allele_1",
+        "other_allele": "allele_0",
+        "fixed_n": 14890,
+        "source_build": "GRCh37",
+        "delimiter": "whitespace",
+        "header_comment_prefix": "##",
+    },
+    "AIH": {
+        "path": (
+            ROOT
+            / "data/reference/gwas/external/AIH"
+            / "GCST90018785_buildGRCh37.tsv.gz"
+        ),
+        "accession": "GCST90018785",
+        "chromosome": "chromosome",
+        "position": "base_pair_location",
+        "p_value": "p_value",
+        "effect_allele": "effect_allele",
+        "other_allele": "other_allele",
+        "fixed_n": 485234,
+        "source_build": "GRCh37",
+        "delimiter": "tab",
+        "header_comment_prefix": None,
+    },
+}
+
+
+def sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(8 * 1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def parse_chromosome(value: str) -> int | None:
+    text = str(value).strip().replace("chr", "").replace("CHR", "")
+    try:
+        chromosome = int(text)
+    except ValueError:
+        return None
+    return chromosome if 1 <= chromosome <= 22 else None
+
+
+def load_acat_module():
+    spec = importlib.util.spec_from_file_location("frozen_acat_module", ACAT_MODULE_PATH)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Cannot import {ACAT_MODULE_PATH}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def stream_gwas(specification: dict) -> tuple[dict, dict]:
+    """Read a full input once, returning the minimum-P coordinate map and QC."""
+    path = Path(specification["path"])
+    snp_map: dict[tuple[int, int], dict[str, float | int]] = {}
+    total_rows = 0
+    valid_records = 0
+    invalid_or_missing_p = 0
+    invalid_coordinate = 0
+    nonautosomal = 0
+    exact_zero_p = 0
+    allele_complete = 0
+    duplicate_coordinate_records = 0
+
+    open_text = gzip.open if path.suffix == ".gz" else open
+    with open_text(path, "rt") as handle:
+        header_line = handle.readline()
+        comment_prefix = specification.get("header_comment_prefix")
+        while header_line and (
+            not header_line.strip()
+            or (comment_prefix and header_line.startswith(comment_prefix))
+        ):
+            header_line = handle.readline()
+        if not header_line:
+            raise RuntimeError(f"{path} has no readable header")
+        if specification.get("delimiter") == "whitespace":
+            header = header_line.lstrip("#").strip().split()
+            row_iterator = (line.rstrip("\n").split() for line in handle)
+        else:
+            header = header_line.rstrip("\n").split("\t")
+            row_iterator = csv.reader(handle, delimiter="\t")
+        index = {name: position for position, name in enumerate(header)}
+        required = [
+            specification["chromosome"],
+            specification["position"],
+            specification["p_value"],
+        ]
+        missing = [column for column in required if column not in index]
+        if missing:
+            raise RuntimeError(f"{path} lacks columns: {missing}; header={header}")
+        chr_i = index[specification["chromosome"]]
+        pos_i = index[specification["position"]]
+        p_i = index[specification["p_value"]]
+        ea_i = index.get(specification["effect_allele"])
+        oa_i = index.get(specification["other_allele"])
+        maximum_index = max(i for i in [chr_i, pos_i, p_i, ea_i, oa_i] if i is not None)
+
+        for row in row_iterator:
+            total_rows += 1
+            if len(row) <= maximum_index:
+                invalid_coordinate += 1
+                continue
+            chromosome = parse_chromosome(row[chr_i])
+            if chromosome is None:
+                raw = str(row[chr_i]).strip().lower().replace("chr", "")
+                if raw in {"x", "y", "xy", "mt", "m", "23", "24", "25"}:
+                    nonautosomal += 1
+                else:
+                    invalid_coordinate += 1
+                continue
+            try:
+                position = int(float(row[pos_i]))
+                if position <= 0:
+                    raise ValueError
+            except ValueError:
+                invalid_coordinate += 1
+                continue
+            try:
+                raw_p = float(row[p_i])
+            except ValueError:
+                invalid_or_missing_p += 1
+                continue
+            if not math.isfinite(raw_p) or raw_p < 0 or raw_p > 1:
+                invalid_or_missing_p += 1
+                continue
+            if raw_p == 0:
+                exact_zero_p += 1
+            p_value = max(raw_p, 1e-300)
+            valid_records += 1
+            if ea_i is not None and oa_i is not None:
+                ea = str(row[ea_i]).strip().upper()
+                oa = str(row[oa_i]).strip().upper()
+                if ea in {"A", "C", "G", "T"} and oa in {"A", "C", "G", "T"}:
+                    allele_complete += 1
+            key = (chromosome, position)
+            if key in snp_map:
+                duplicate_coordinate_records += 1
+                if p_value < float(snp_map[key]["p"]):
+                    snp_map[key] = {"p": p_value, "n": specification["fixed_n"]}
+            else:
+                snp_map[key] = {"p": p_value, "n": specification["fixed_n"]}
+
+    audit = {
+        "total_rows": total_rows,
+        "valid_autosomal_coordinate_p_records": valid_records,
+        "unique_autosomal_coordinates": len(snp_map),
+        "invalid_or_missing_p_records": invalid_or_missing_p,
+        "invalid_coordinate_records": invalid_coordinate,
+        "nonautosomal_records": nonautosomal,
+        "exact_zero_p_records": exact_zero_p,
+        "allele_complete_records": allele_complete,
+        "allele_complete_fraction": allele_complete / valid_records if valid_records else math.nan,
+        "duplicate_coordinate_records": duplicate_coordinate_records,
+        "unique_coordinate_fraction": len(snp_map) / valid_records if valid_records else math.nan,
+    }
+    return snp_map, audit
+
+
+def gene_result_frame(results: dict) -> pd.DataFrame:
+    rows = []
+    for gene, values in results.items():
+        rows.append({"gene": gene, **values})
+    return pd.DataFrame(rows).sort_values("gene").reset_index(drop=True)
+
+
+def reference_calibration() -> pd.DataFrame:
+    rows = []
+    cache_dir = ROOT / "result/08_evidence_completion/acat_native_grch37_primary"
+    for trait in [
+        "CIRR", "LIVER_FAT", "NAFLD", "ALT", "AST",
+        "GGT", "ALP", "BILI", "PBC",
+    ]:
+        frame = pd.read_csv(cache_dir / f"acat_{trait}_9trait.tsv", sep="\t")
+        matched = pd.to_numeric(frame["nsnps_matched"], errors="coerce")
+        total = pd.to_numeric(frame["nsnps_total"], errors="coerce")
+        p = pd.to_numeric(frame["acat_p"], errors="coerce")
+        rows.append({
+            "trait": trait,
+            "panel_role": "frozen_9trait_reference",
+            "tested_genes": len(frame),
+            "median_snp_match_fraction": float((matched / total).median()),
+            "p10_snp_match_fraction": float((matched / total).quantile(0.10)),
+            "median_gene_p": float(p.median()),
+            "n_gene_p_lt_0_05": int(p.lt(0.05).sum()),
+            "n_gene_p_lt_5e_8": int(p.lt(5e-8).sum()),
+            "minimum_gene_p": float(p.min()),
+        })
+    return pd.DataFrame(rows)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--traits",
+        nargs="+",
+        choices=sorted(TRAITS),
+        default=sorted(TRAITS),
+    )
+    args = parser.parse_args()
+    OUT.mkdir(parents=True, exist_ok=True)
+    criteria = pd.read_csv(CRITERIA, sep="\t")
+    criteria.to_csv(OUT / "frozen_eligibility_criteria.tsv", sep="\t", index=False)
+    metadata = pd.read_csv(METADATA, sep="\t").set_index("trait")
+    acat_module = load_acat_module()
+    gene_snps, _ = acat_module.load_broadaway_gene_snp_map()
+
+    audit_rows = []
+    gate_rows = []
+    calibration = reference_calibration()
+
+    for trait in args.traits:
+        specification = TRAITS[trait]
+        path = Path(specification["path"])
+        if not path.is_file():
+            raise FileNotFoundError(path)
+        if trait not in metadata.index:
+            raise RuntimeError(f"{trait} is absent from the source metadata registry")
+        record = metadata.loc[trait]
+        input_sha256 = sha256(path)
+        snp_map, raw_audit = stream_gwas(specification)
+        results = acat_module.compute_gene_level_acat(gene_snps, snp_map, trait)
+        frame = gene_result_frame(results)
+        frame.to_csv(OUT / f"acat_{trait}_eligibility.tsv", sep="\t", index=False)
+        matched = pd.to_numeric(frame["nsnps_matched"], errors="coerce")
+        total = pd.to_numeric(frame["nsnps_total"], errors="coerce")
+        gene_p = pd.to_numeric(frame["acat_p"], errors="coerce")
+        max_n = pd.to_numeric(frame["max_n"], errors="coerce")
+        gene_valid = gene_p.notna() & np.isfinite(gene_p) & gene_p.gt(0) & gene_p.le(1)
+        median_match = float((matched / total).median())
+        tested_genes = int(len(frame))
+        registered_n = float(record["official_total_N"])
+        n_consistent = bool(
+            len(max_n)
+            and max_n.notna().all()
+            and np.isclose(max_n.min(), registered_n)
+            and np.isclose(max_n.max(), registered_n)
+        )
+        gates = {
+            "E01": bool(
+                str(record["source_accession_or_release"]).strip()
+                and str(record["primary_metadata_source"]).strip()
+            ),
+            "E02": raw_audit["valid_autosomal_coordinate_p_records"] >= 1_000_000,
+            "E03": (
+                str(record["analysis_build"]) == "GRCh37"
+                and str(specification["source_build"]) == "GRCh37"
+            ),
+            "E04": raw_audit["valid_autosomal_coordinate_p_records"] >= 1_000_000,
+            "E05": n_consistent,
+            "E06": tested_genes >= math.ceil(0.90 * FROZEN_GENE_UNIVERSE),
+            "E07": median_match >= 0.10,
+            "E08": bool(gene_valid.all()),
+            "E09": True,
+        }
+        for criterion_id, passed in gates.items():
+            gate_rows.append({
+                "trait": trait,
+                "criterion_id": criterion_id,
+                "passed": passed,
+                "blocking": True,
+            })
+        audit_rows.append({
+            "trait": trait,
+            "accession": specification["accession"],
+            "input_path": str(path.relative_to(ROOT)),
+            "input_sha256": input_sha256,
+            "source_build": specification["source_build"],
+            "analysis_build": str(record["analysis_build"]),
+            "official_total_N": registered_n,
+            "cases": record["cases"],
+            "controls": record["controls"],
+            "effective_case_control_N": record["effective_case_control_N"],
+            **raw_audit,
+            "tested_genes": tested_genes,
+            "tested_gene_fraction": tested_genes / FROZEN_GENE_UNIVERSE,
+            "median_snp_match_fraction": median_match,
+            "p10_snp_match_fraction": float((matched / total).quantile(0.10)),
+            "gene_p_valid_fraction": float(gene_valid.mean()),
+            "median_gene_p": float(gene_p.median()),
+            "n_gene_p_lt_0_05": int(gene_p.lt(0.05).sum()),
+            "n_gene_p_lt_5e_8": int(gene_p.lt(5e-8).sum()),
+            "minimum_gene_p": float(gene_p.min()),
+            "gene_level_N_min": float(max_n.min()),
+            "gene_level_N_max": float(max_n.max()),
+            "all_blocking_gates_pass": all(gates.values()),
+            "eligibility_adjudication": (
+                "eligible_for_nomination_input"
+                if all(gates.values())
+                else "not_eligible_for_nomination_input"
+            ),
+            "outcome_blinding": (
+                "No HCC input or HCC-derived table was read by this audit; "
+                "historical outcome exposure is documented in the protocol amendment."
+            ),
+        })
+        calibration = pd.concat([
+            calibration,
+            pd.DataFrame([{
+                "trait": trait,
+                "panel_role": "eligibility_candidate",
+                "tested_genes": tested_genes,
+                "median_snp_match_fraction": median_match,
+                "p10_snp_match_fraction": float((matched / total).quantile(0.10)),
+                "median_gene_p": float(gene_p.median()),
+                "n_gene_p_lt_0_05": int(gene_p.lt(0.05).sum()),
+                "n_gene_p_lt_5e_8": int(gene_p.lt(5e-8).sum()),
+                "minimum_gene_p": float(gene_p.min()),
+            }]),
+        ], ignore_index=True)
+        del snp_map, results, frame
+
+    audit = pd.DataFrame(audit_rows)
+    gates = pd.DataFrame(gate_rows).merge(
+        criteria[["criterion_id", "domain", "rule", "threshold"]],
+        on="criterion_id",
+        how="left",
+    )
+    audit.to_csv(OUT / "psc_aih_gene_input_audit.tsv", sep="\t", index=False)
+    gates.to_csv(OUT / "psc_aih_eligibility_gates.tsv", sep="\t", index=False)
+    calibration.to_csv(OUT / "gene_p_calibration_comparison.tsv", sep="\t", index=False)
+    summary = {
+        "created_utc": datetime.now(timezone.utc).isoformat(),
+        "analysis_build": "GRCh37",
+        "frozen_gene_universe": FROZEN_GENE_UNIVERSE,
+        "traits_audited": args.traits,
+        "eligible_traits": audit.loc[
+            audit["all_blocking_gates_pass"], "trait"
+        ].tolist(),
+        "outcome_blinding": (
+            "No HCC input or HCC-derived table was read by this audit; "
+            "historical outcome exposure is documented in the protocol amendment."
+        ),
+    }
+    (OUT / "eligibility_summary.json").write_text(
+        json.dumps(summary, indent=2, sort_keys=True) + "\n"
+    )
+    print(audit[[
+        "trait",
+        "tested_genes",
+        "median_snp_match_fraction",
+        "gene_p_valid_fraction",
+        "all_blocking_gates_pass",
+        "eligibility_adjudication",
+    ]].to_string(index=False))
+
+
+if __name__ == "__main__":
+    main()

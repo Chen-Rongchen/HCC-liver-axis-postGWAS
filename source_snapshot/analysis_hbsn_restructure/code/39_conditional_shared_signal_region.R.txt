@@ -1,0 +1,140 @@
+#!/usr/bin/env Rscript
+# Conditional exploratory analysis. Does not clear absolute direction/LD/overlap.
+suppressPackageStartupMessages({library(data.table);library(susieR);library(coloc)})
+args <- commandArgs(trailingOnly=TRUE);stopifnot(length(args)==1)
+region <- args[[1]]
+base <- "analysis_hbsn_restructure/14_shared_signal_resolution"
+root <- file.path(base,"independent_resolution")
+out <- file.path(root,"conditional_fits",region)
+dir.create(out,recursive=TRUE,showWarnings=FALSE)
+set.seed(20260925)
+# Reuse the exact frozen fitter from script 31 without executing its main loop.
+expressions <- parse("analysis_hbsn_restructure/code/31_run_shared_signal_region.R")
+definitions <- Filter(function(e) is.call(e) && identical(e[[1]],as.name("<-")) &&
+    identical(e[[2]],as.name("fit_one")),as.list(expressions))
+stopifnot(length(definitions)==1);eval(definitions[[1]])
+records <- fread(file.path(base,"dense_pair_QC_manifest.tsv"))[region_code==region]
+gate <- fread(file.path(root,"regional_LD_diagnostic_summary.tsv"))[region_code==region]
+rounding <- fread(file.path(root,"regional_rounding_adjudication.tsv"))[region_code==region]
+stopifnot(nrow(gate)==1,nrow(rounding)==1)
+regional_ok <- gate$diagnostic_status=="completed" &&
+    isTRUE(gate$official_flip_warnings==0) &&
+    isTRUE(rounding$rounding_adjudicated_magnitude_pass)
+Rfull <- NULL
+if(regional_ok) {
+    g <- fread(cmd=paste("gzip -dc --",shQuote(records$genotype_path[[1]])))
+    snps <- g$rsid;Rfull <- cor(t(as.matrix(g[,!"rsid"])))
+    dimnames(Rfull) <- list(snps,snps)
+}
+PGRID <- c(1e-6,5e-6,1e-5,5e-5,1e-4)
+posteriors <- function(a,b,variant) {
+    if(!isTRUE(a$converged)||!isTRUE(b$converged)||
+        !length(a$sets$cs)||!length(b$sets$cs)) return(NULL)
+    rbindlist(lapply(PGRID,function(pr) {
+        ret <- as.data.table(coloc.susie(a,b,p1=1e-4,p2=1e-4,p12=pr)$summary)
+        ret[,`:=`(p12=pr,model_variant=variant)];ret
+    }),fill=TRUE)
+}
+for(i in seq_len(nrow(records))) {
+    rec <- records[i];trait <- rec$trait
+    status <- data.table(comparison_id=rec$comparison_id,region_code=region,trait=trait,
+        n_variants=rec$n_common,coverage_eligible=rec$coverage_eligible,
+        regional_gate_pass=regional_ok,fit_status="not_run",
+        primary_result=FALSE,highest_robust_label_allowed=FALSE,
+        absolute_direction_resolved=FALSE,sample_overlap_resolved=FALSE,
+        finite_reference_sensitivity_completed=FALSE)
+    if(!isTRUE(rec$coverage_eligible)) {
+        status[,fit_status:="not_evaluable_coverage"]
+    } else if(!regional_ok) {
+        status[,fit_status:=if(gate$diagnostic_status=="completed")
+            "not_evaluable_HCC_regional_diagnostic_gate" else "not_evaluable_no_HCC_region"]
+    } else {
+        warns <- character()
+        message(region," ",trait," pair diagnostics")
+        tryCatch(withCallingHandlers({
+            d <- fread(cmd=paste("gzip -dc --",shQuote(rec$pair_path)))
+            d <- d[match(snps[snps %in% d$rsid],d$rsid)]
+            stopifnot(nrow(d)==rec$n_common,!anyDuplicated(d$rsid))
+            R <- Rfull[d$rsid,d$rsid,drop=FALSE]
+            eig <- eigen(R,symmetric=TRUE)
+            stopifnot(min(eig$values)> -1e-7);attr(R,"eigen") <- eig
+            sh <- estimate_s_rss(d$z_hcc,R,n=rec$HCC_N)
+            sl <- estimate_s_rss(d$z_liver,R,n=rec$liver_N)
+            kh <- kriging_rss(d$z_hcc,R,n=rec$HCC_N,s=sh)$conditional_dist
+            kl <- kriging_rss(d$z_liver,R,n=rec$liver_N,s=sl)$conditional_dist
+            dh <- kh$logLR>2 & abs(kh$z)>2;dl <- kl$logLR>2 & abs(kl$z)>2
+            diag <- data.table(rsid=d$rsid,HCC_logLR=kh$logLR,liver_logLR=kl$logLR,
+                HCC_adjusted_z=kh$z,liver_adjusted_z=kl$z,HCC_flip_warning=dh,liver_flip_warning=dl)
+            fwrite(diag,file.path(out,paste0(trait,".pair_LD_diagnostics.tsv.gz")),sep="\t")
+            status[,`:=`(HCC_s=sh,liver_s=sl,HCC_flip_warnings=sum(dh),liver_flip_warnings=sum(dl))]
+            if(any(dh)||any(dl)) {
+                status[,fit_status:="not_evaluable_pair_LD_diagnostic_gate"]
+            } else {
+                message(region," ",trait," conditional fit")
+                a <- fit_one(d$z_hcc,R,rec$HCC_N)
+                b <- fit_one(d$z_liver,R,rec$liver_N)
+                flip <- fit_one(-d$z_hcc,R,rec$HCC_N)
+                nh <- 4/(1/rec$HCC_cases+1/rec$HCC_controls)
+                nl <- if(rec$liver_type=="cc") 4/(1/rec$liver_cases+1/rec$liver_controls) else rec$liver_N
+                ae <- fit_one(d$z_hcc,R,nh)
+                be <- if(rec$liver_type=="cc") fit_one(d$z_liver,R,nl) else b
+                fits <- list(HCC=a,liver=b,HCC_global_sign_reverse=flip,
+                    HCC_effective_N=ae,liver_effective_N=be,snps=d$rsid)
+                saveRDS(fits,file.path(out,paste0(trait,".fits.rds")))
+                post <- rbindlist(list(posteriors(a,b,"total_N"),
+                    posteriors(flip,b,"global_HCC_sign_reverse"),
+                    posteriors(ae,be,"effective_N")),fill=TRUE)
+                if(nrow(post)) {
+                    post[,comparison_id:=rec$comparison_id]
+                    fwrite(post,file.path(out,paste0(trait,".signal_pairs.tsv")),sep="\t")
+                }
+                pip <- rbindlist(lapply(names(fits)[1:5],function(label) {
+                    f <- fits[[label]]
+                    data.table(study_model=label,rsid=d$rsid,pip=f$pip)
+                }))
+                fwrite(pip,file.path(out,paste0(trait,".PIP.tsv.gz")),sep="\t")
+                cs <- rbindlist(lapply(names(fits)[1:5],function(label) {
+                    f <- fits[[label]]
+                    if(!length(f$sets$cs)) return(NULL)
+                    rbindlist(lapply(seq_along(f$sets$cs),function(j) {
+                        ix <- f$sets$cs[[j]]
+                        data.table(study_model=label,signal=f$sets$cs_index[j],
+                            rsid=d$rsid[ix],pip=f$pip[ix],CS_name=names(f$sets$cs)[j])
+                    }))
+                }),fill=TRUE)
+                if(nrow(cs)) fwrite(cs,file.path(out,paste0(trait,".credible_sets.tsv.gz")),sep="\t")
+                diff_pip <- max(abs(a$pip-flip$pip))
+                diff_post <- NA_real_
+                if(nrow(post) && "total_N" %in% post$model_variant &&
+                    "global_HCC_sign_reverse" %in% post$model_variant) {
+                    p0 <- post[model_variant=="total_N"];pn <- post[model_variant=="global_HCC_sign_reverse"]
+                    setorder(p0,p12,idx1,idx2);setorder(pn,p12,idx1,idx2)
+                    if(nrow(p0)==nrow(pn) && identical(p0[,.(p12,idx1,idx2)],pn[,.(p12,idx1,idx2)]))
+                        diff_post <- max(abs(as.matrix(p0[,paste0("PP.H",0:4,".abf"),with=FALSE])-
+                            as.matrix(pn[,paste0("PP.H",0:4,".abf"),with=FALSE])))
+                }
+                cs_same <- identical(a$sets$cs,flip$sets$cs)
+                symmetry <- diff_pip<=1e-8 && cs_same && (is.na(diff_post)||diff_post<=1e-8)
+                status[,`:=`(HCC_converged=isTRUE(a$converged),liver_converged=isTRUE(b$converged),
+                    HCC_credible_sets=length(a$sets$cs),liver_credible_sets=length(b$sets$cs),
+                    HCC_effective_N=nh,liver_effective_N=nl,
+                    HCC_effective_N_converged=isTRUE(ae$converged),liver_effective_N_converged=isTRUE(be$converged),
+                    HCC_effective_N_CS=length(ae$sets$cs),liver_effective_N_CS=length(be$sets$cs),
+                    HCC_L_cap_reached=length(a$sets$cs)>=10,liver_L_cap_reached=length(b$sets$cs)>=10,
+                    max_PIP_global_sign_difference=diff_pip,
+                    max_posterior_global_sign_difference=diff_post,
+                    global_sign_symmetry_pass=symmetry,
+                    HCC_N_sensitivity_max_PIP_difference=max(abs(a$pip-ae$pip)),
+                    liver_N_sensitivity_max_PIP_difference=max(abs(b$pip-be$pip)))]
+                status[,fit_status:=if(!isTRUE(a$converged)||!isTRUE(b$converged))
+                    "not_evaluable_nonconvergence" else if(!symmetry)
+                    "not_evaluable_global_sign_symmetry_failure" else if(!length(a$sets$cs)||!length(b$sets$cs))
+                    "unresolved_no_credible_signal" else "conditional_signal_pair_evaluable"]
+            }
+        },warning=function(w){warns <<- c(warns,conditionMessage(w));invokeRestart("muffleWarning")}),
+        error=function(e){status[,`:=`(fit_status="technical_error",error=conditionMessage(e))]})
+        status[,warnings:=paste(unique(warns),collapse=" | ")]
+    }
+    fwrite(status,file.path(out,paste0(trait,".status.tsv")),sep="\t")
+    message(region," ",trait," ",status$fit_status)
+}

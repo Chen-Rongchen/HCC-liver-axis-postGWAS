@@ -1,0 +1,18 @@
+{
+  "trait": "BILI",
+  "path": "data/reference/gwas/grch37_primary/GCST90018973_buildGRCh37.tsv.gz",
+  "sha256": "cbc176d1e6b6cb1f1a11c452d69d6c8119ebe03e2d38beca7565fc73a8a8eaa1",
+  "counts": {
+    "raw_rows": 20535842,
+    "target_valid_rows": 86287
+  },
+  "coordinate_keys": 86190,
+  "actual_variant_keys": 86190,
+  "allele_status_counts": {
+    "exact_unordered_pair": 86044,
+    "literal_pair_mismatch_or_missing": 146
+  },
+  "replay_genes": 283,
+  "all_replays_passed": true,
+  "script_sha256": "2509d70ad8b5ad453c89c701566b138905ab55e3a4e6d017029f1e173b9731d5"
+}

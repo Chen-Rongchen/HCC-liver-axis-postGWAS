@@ -1,0 +1,405 @@
+"""Bounded, additive audit. Run with the project's locked Pixi Python.
+
+prepare -> extract TRAIT (each of eleven) -> summarize -> verify
+No association models or coloc fitting; no writes outside this directory.
+"""
+from pathlib import Path
+from collections import Counter, defaultdict
+from itertools import combinations
+from datetime import datetime, timezone
+import argparse, gzip, hashlib, importlib.util, json, math, re, sys
+import numpy as np
+import pandas as pd
+
+OUT = Path(__file__).resolve().parent
+BASE = OUT.parent
+ROOT = BASE.parent
+ST28 = BASE / '28_final_method_and_reanalysis'
+ST25 = BASE / '25_p1_boundary_sensitivity'
+MAP = ROOT / 'analysis_update_2026_hcc_gwas/03_qc/frozen_map_cache'
+TRAITS = ['CIRR','LIVER_FAT','NAFLD','ALT','AST','GGT','ALP','BILI','PBC','PSC','AIH']
+CHECKS = []
+
+def read(p):
+    return pd.read_csv(p, sep='\t', float_precision='round_trip')
+
+def write(d, n):
+    if not isinstance(d, pd.DataFrame): d = pd.DataFrame(d)
+    d.to_csv(OUT/n, sep='\t', index=False, na_rep='', float_format='%.17g')
+
+def sha(p):
+    h=hashlib.sha256()
+    with open(p,'rb') as f:
+        for b in iter(lambda:f.read(8*1024*1024),b''): h.update(b)
+    return h.hexdigest()
+
+def load(p,n):
+    spec=importlib.util.spec_from_file_location(n,p); m=importlib.util.module_from_spec(spec)
+    sys.modules[n]=m; spec.loader.exec_module(m); return m
+
+def check(n,ok,detail=''):
+    CHECKS.append(dict(check=n,passed=bool(ok),detail=str(detail)))
+    if not ok: raise AssertionError((n,detail))
+
+def joined(v): return ';'.join(sorted(set(str(x) for x in v if pd.notna(x) and str(x))))
+def strings(v): return set(str(v).split(';')) if pd.notna(v) and str(v) else set()
+
+def resources():
+    old=load(ROOT/'scripts/02_gene_level_liver_axis_nomination/02_rerun_acat_9trait.py','event_old_adapter')
+    extra=load(ROOT/'scripts/17_trait_eligibility/17_audit_psc_aih_gene_inputs.py','event_extra_adapter')
+    score=load(ST25/'run_traits.py','event_boundary_score')
+    blocks=load(ROOT/'scripts/14_evidence_boundary_completion/14_build_ld_locus_and_coloc_inputs.py','event_blocks')
+    return old,extra,score,blocks
+
+def configuration(t,old,extra):
+    if t in extra.TRAITS:
+        q=extra.TRAITS[t]
+        return dict(path=str(q['path']),chr_col=q['chromosome'],pos_col=q['position'],p_col=q['p_value'],ea_col=q['effect_allele'],nea_col=q['other_allele'],format='standard',sep=None if t=='PSC' else '\t')
+    q=old.configured_gwas('native_grch37_primary')[t].copy()
+    assert q.get('coordinate_source')!='rsid_to_grch37'
+    return q
+
+def protected():
+    files=[]
+    for folder in [ST28, BASE/'29_abstract_and_novelty', ROOT/'submission/EJHG_evidence_revision']:
+        files.extend(p for p in folder.rglob('*') if p.is_file() and '__pycache__' not in str(p))
+    files += [BASE/'16_corrected_shared_signal/resolution_index_198.tsv', BASE/'14_shared_signal_resolution/region_registry.tsv',ST25/'boundary_liver_gene_registry.tsv']
+    return sorted(set(files))
+
+def prepare():
+    old,extra,score,bmod=resources()
+    d=read(ST28/'candidate_universe.tsv'); g=read(ST25/'boundary_liver_gene_registry.tsv').set_index('gene_symbol')
+    check('283_unique_candidates',len(d)==283 and d.gene_symbol.is_unique)
+    check('original_annotation_208_75',d.EUR_ld_block.notna().sum()==208 and d.EUR_ld_block.isna().sum()==75)
+    checksources=protected()+[OUT/'charter.md',OUT/'run.py']
+    if not (OUT/'protected_before.tsv').exists():
+        write([dict(path=str(p.relative_to(ROOT)),sha256=sha(p),bytes=p.stat().st_size) for p in checksources],'protected_before.tsv')
+    if not (OUT/'freeze.json').exists():
+        (OUT/'freeze.json').write_text(json.dumps(dict(time_utc=datetime.now(timezone.utc).isoformat(),charter_sha256=sha(OUT/'charter.md'),script_sha256=sha(OUT/'run.py'),scope='post_result_bounded_measurement_not_prospective_blinding'),indent=2)+'\n')
+    blocks=bmod.read_blocks(bmod.LD_BLOCKS['EUR'],'EUR');write(blocks,'frozen_EUR_blocks.tsv')
+    regions=read(BASE/'14_shared_signal_resolution/region_registry.tsv');write(regions,'coloc_18_regions.tsv')
+    frozen=read(ROOT/'analysis_update_2026_hcc_gwas/06_primary_downstream/gene_to_ancestry_ld_block_updated.tsv').set_index('gene')
+    ids=read(ST28/'gene_identifiers.tsv').set_index('gene_symbol')
+    # Scan only gene features, preserve stable ID, strand, chromosome, coordinates.
+    genes=[];gtf=OUT/'gencode.v19.annotation.gtf.gz'
+    with gzip.open(gtf,'rt') as f:
+        for line in f:
+            if line.startswith('#'):continue
+            p=line.rstrip('\n').split('\t')
+            if p[2]!='gene':continue
+            a=dict(re.findall(r'(\w+) "([^"]*)"',p[8]));ch=p[0].removeprefix('chr')
+            if not ch.isdigit():continue
+            genes.append(dict(ensg=a['gene_id'].split('.')[0],gtf_symbol=a['gene_name'],gtf_chr=int(ch),start=int(p[3]),end=int(p[4]),tss=int(p[3]) if p[6]=='+' else int(p[4]),strand=p[6]))
+    gt=pd.DataFrame(genes); annot=[]; alias_audit=[]; lookup={n:x for n,x in gt.groupby('ensg')}
+    hg=read(BASE/'21_candidate_gene_audit/public_sources/hgnc_complete_set.tsv').fillna('')
+    for _,r in d.iterrows():
+        name=r.gene_symbol; ensg=g.loc[name,'ensg'];hit=lookup.get(ensg,gt.iloc[:0]); same=hit[hit.gtf_chr.eq(r.chr)].drop_duplicates(['gtf_chr','start','end','tss'])
+        f=frozen.loc[name];row=dict(gene_symbol=name,ensg=ensg,original_block_missing=pd.isna(r.EUR_ld_block),original_EUR_block=r.EUR_ld_block,original_tss=f.tss,original_start=f.start,original_end=f.end,source_coordinate_missing=pd.isna(f.tss),stable_id_matches=len(hit),stable_id_same_chr_matches=len(same),approved_symbol=ids.loc[name,'approved_symbol'])
+        method='unique_same_build_stable_ID_same_chromosome'
+        if hit.empty:
+            h=hg[hg.ensembl_gene_id.eq(ensg)]
+            if len(h)==1:
+                previous=set(h.iloc[0].prev_symbol.split('|'))|{h.iloc[0].symbol,name};previous.discard('')
+                ah=gt[gt.gtf_symbol.isin(previous)&gt.gtf_chr.eq(r.chr)].drop_duplicates(['ensg','gtf_chr','start','end','tss'])
+                for _,ar in ah.iterrows():alias_audit.append(dict(gene_symbol=name,current_ensg=ensg,hgnc_symbol=h.iloc[0].symbol,previous_symbols=h.iloc[0].prev_symbol,**ar.to_dict(),n_candidate_annotation_records=len(ah)))
+                if len(ah)==1:
+                    same=ah;method='unique_HGNC_approved_or_previous_symbol_same_chromosome_ID_changed'
+        if len(same)==1:
+            x=same.iloc[0];row.update({('gtf_ensg' if k=='ensg' else k):v for k,v in x.to_dict().items()});row['coordinate_status']=method
+            if pd.isna(r.EUR_ld_block):
+                row['missing_reason']=('symbol_and_stable_ID_version_change' if method.endswith('ID_changed') else ('symbol_version_mismatch_in_frozen_coordinate_join' if name!=x.gtf_symbol else 'frozen_coordinate_join_missing_despite_exact_symbol'))
+            else: row['missing_reason']='originally_annotated'
+            row['original_TSS_matches_GENCODE']=bool(f.tss==x.tss) if pd.notna(f.tss) else np.nan
+        else:
+            row.update(gtf_symbol='',gtf_chr=np.nan,start=np.nan,end=np.nan,tss=np.nan,strand='')
+            row['coordinate_status']='stable_ID_absent' if hit.empty else 'stable_ID_chromosome_mismatch_or_ambiguous'
+            row['missing_reason']=row['coordinate_status'] if pd.isna(r.EUR_ld_block) else 'originally_annotated_ID_crosscheck_unresolved'
+        annot.append(row)
+    a=pd.DataFrame(annot);a['audit_recovered_EUR_block']=bmod.map_positions_to_blocks(a.gtf_chr,a.tss,blocks)
+    a['audit_final_EUR_block']=a.original_EUR_block.fillna(a.audit_recovered_EUR_block)
+    write(a,'gene_annotation_audit.tsv');write(alias_audit,'HGNC_GENCODE_identifier_crosswalk.tsv');write(gt[gt.ensg.isin(set(a.ensg)|set(a.gtf_ensg.dropna()))],'GENCODE_candidate_records.tsv')
+    f=d.merge(a,on='gene_symbol',validate='one_to_one');write(f,'candidate_annotation_and_features.tsv')
+    summaries=[]
+    for col in ['B','S','EUR_Y','EAS_Y','EUR_fraction','EAS_fraction','gene_length_bp','nsnps_cis','HCCDB18_adjacent_median','log_gene_length','log_cis_snp_count','log1p_adjacent_expression']:
+        for missing,z in f.groupby('original_block_missing'):
+            v=z[col].dropna();summaries.append(dict(variable=col,original_block_missing=missing,n_genes=len(z),n_available=len(v),mean=v.mean(),median=v.median(),q25=v.quantile(.25),q75=v.quantile(.75),minimum=v.min(),maximum=v.max()))
+    write(summaries,'missingness_feature_summary.tsv')
+    write(f.groupby(['original_block_missing','chr']).size().rename('n_genes').reset_index(),'missingness_chromosome_counts.tsv')
+    write(f.groupby(['original_block_missing','B']).size().rename('n_genes').reset_index(),'missingness_breadth_counts.tsv')
+    write(f.groupby(['original_block_missing','complete_X','support_population']).size().rename('n_genes').reset_index(),'missingness_model_coverage.tsv')
+    build_map()
+    write(CHECKS,'prepare_checks.tsv')
+    print(json.dumps(dict(candidates=len(d),missing_reasons=a[a.original_block_missing].missing_reason.value_counts().to_dict(),recovered=int((a.original_block_missing&a.audit_final_EUR_block.notna()).sum())),indent=2),flush=True)
+
+def build_map():
+    d=read(ST28/'candidate_universe.tsv');old,extra,score,bmod=resources()
+    blocks=bmod.read_blocks(bmod.LD_BLOCKS['EUR'],'EUR')
+    gtf=OUT/'gencode.v19.annotation.gtf.gz'
+    # Build an additive, row-preserving subset of the frozen map. No window changes.
+    registry=read(MAP/'gene_registry.tsv');wanted=registry[registry.gene.isin(d.gene_symbol)]
+    check('all_candidates_in_frozen_map',len(wanted)==283)
+    parts=[];vparts=[];global_id=0
+    for ch in range(1,23):
+        prefix=f'chr{ch:02d}';gi=np.load(MAP/f'{prefix}_gene_index.npy',mmap_mode='r');vi=np.load(MAP/f'{prefix}_variant_index.npy',mmap_mode='r')
+        pos=np.load(MAP/f'{prefix}_positions.npy',mmap_mode='r');keys=np.load(MAP/f'{prefix}_variant_keys.npy',mmap_mode='r')
+        ix=np.flatnonzero(np.isin(gi,wanted.gene_index));used=np.unique(vi[ix]);mapping=dict(zip(used,range(global_id,global_id+len(used))))
+        tokens=read(MAP/f'{prefix}_allele_tokens.tsv').set_index('allele_code').allele.to_dict()
+        for j in used:
+            key=int(keys[j]);lo=(key>>17)&((1<<17)-1);hi=key&((1<<17)-1);alleles=sorted([str(tokens[lo]),str(tokens[hi])])
+            vparts.append(dict(variant_index=mapping[j],chromosome=ch,position_grch37=int(pos[j]),coordinate_key=f'{ch}:{int(pos[j])}',allele_pair='/'.join(alleles),variant_key=f'GRCh37:{ch}:{int(pos[j])}:'+':'.join(alleles),cache_variant_index=int(j)))
+        parts.append(pd.DataFrame(dict(gene_symbol=registry.set_index('gene_index').gene.loc[gi[ix]].to_numpy(),variant_index=[mapping[j] for j in vi[ix]])))
+        global_id+=len(used)
+    edges=pd.concat(parts,ignore_index=True);variants=pd.DataFrame(vparts)
+    variants['EUR_block']=bmod.map_positions_to_blocks(variants.chromosome,variants.position_grch37,blocks)
+    write(edges,'frozen_candidate_mapping_edges.tsv.gz');write(variants,'variant_dictionary.tsv.gz')
+    check('mapping_counts_replayed',edges.groupby('gene_symbol').size().sort_index().equals(wanted.set_index('gene').nsnps_cis.sort_index().rename_axis('gene_symbol')))
+    sources=[gtf,MAP/'gene_registry.tsv',bmod.LD_BLOCKS['EUR'],ST28/'gene_identifiers.tsv',ROOT/'analysis_update_2026_hcc_gwas/06_primary_downstream/gene_to_ancestry_ld_block_updated.tsv']
+    sources += [MAP/f'chr{c:02d}_{kind}' for c in range(1,23) for kind in ['gene_index.npy','variant_index.npy','positions.npy','variant_keys.npy','allele_tokens.tsv']]
+    for t in TRAITS:sources += [ST25/f'{t}_manifest.json',ST25/f'{t}_gene_acat.tsv']
+    write([dict(path=str(p.relative_to(ROOT)),bytes=p.stat().st_size,sha256=sha(p)) for p in sources if p.is_file()],'input_manifest.tsv')
+    print(json.dumps(dict(candidates=len(d),mapping_records=len(edges),unique_map_variants=len(variants))),flush=True)
+
+def extract(t):
+    """Targeted streaming extraction preserving original position/min-P semantics.
+
+    Adds allele provenance; gene score/count replay against the completed full
+    GWAS stage25 replay is a mandatory gate. Never reconstruct P from beta/SE
+    except the already-authorized AST VCF fallback in the original loader.
+    """
+    old,extra,score,_=resources();q=configuration(t,old,extra);path=Path(q['path'])
+    original=json.loads((ST25/f'{t}_manifest.json').read_text());before=sha(path)
+    check(t+'_raw_hash',before==original['input_sha256'])
+    variants=read(OUT/'variant_dictionary.tsv.gz');targets=set(zip(variants.chromosome,variants.position_grch37)); selected={}; counts=Counter()
+    opening=gzip.open if path.suffix=='.gz' else open
+    with opening(path,'rt') as stream:
+        header=None
+        for line in stream:
+            if q['format']=='opengwas_vcf':
+                if line.startswith('#'):continue
+                p=line.rstrip('\n').split('\t');counts['raw_rows']+=1
+                if len(p)<10:continue
+                ch=old.parse_chromosome(p[0])
+                try: pos=int(p[1])
+                except ValueError:continue
+                if (ch,pos) not in targets:continue
+                m=dict(zip(p[8].split(':'),p[9].split(':')))
+                try:
+                    value=max(10.**(-float(m['LP'])),1e-300) if m.get('LP') not in (None,'','.') else old.z_to_p(float(m['ES'])/float(m['SE']))
+                except (ValueError,ZeroDivisionError):continue
+                ea,oa=p[4].upper(),p[3].upper()
+            else:
+                if line.startswith('##'):continue
+                if header is None:
+                    header=line.strip().lstrip('#').split(q.get('sep')); ix={n:i for i,n in enumerate(header)};continue
+                p=line.strip().split(q.get('sep'));counts['raw_rows']+=1
+                try:
+                    ch=old.parse_chromosome(p[ix[q['chr_col']]])
+                    pos=int(float(p[ix[q['pos_col']]])) if t in extra.TRAITS else int(p[ix[q['pos_col']]])
+                except (ValueError,IndexError):continue
+                if (ch,pos) not in targets:continue
+                try: value=float(p[ix[q['p_col']]])
+                except (ValueError,IndexError):continue
+                if not math.isfinite(value) or not 0<=value<=1:continue
+                value=max(value,1e-300)
+                ea=p[ix[q['ea_col']]].upper() if q['ea_col'] in ix else ''
+                oa=p[ix[q['nea_col']]].upper() if q['nea_col'] in ix else ''
+            if not math.isfinite(value) or not 0<=value<=1:continue
+            counts['target_valid_rows']+=1;key=(ch,pos)
+            pair='/'.join(sorted([ea,oa])) if ea and oa and ea!=oa and ea not in {'.','NA'} and oa not in {'.','NA'} and ',' not in ea and ',' not in oa else 'UNRESOLVED'
+            if key not in selected:selected[key]=dict(p=value,pairs={pair},all_pairs={pair},n_records=1,conflicting_p=False)
+            else:
+                r=selected[key];r['n_records']+=1;r['all_pairs'].add(pair);r['conflicting_p'] |= value!=r['p']
+                if value<r['p']:r['p']=value;r['pairs']={pair}
+                elif value==r['p']:r['pairs'].add(pair)
+    records=[]
+    for _,v in variants.iterrows():
+        r=selected.get((v.chromosome,v.position_grch37))
+        if r is None:continue
+        match=len(r['pairs'])==1 and v.allele_pair in r['pairs']
+        records.append(dict(variant_index=int(v.variant_index),p=r['p'],selected_source_allele_pairs=joined(r['pairs']),all_source_allele_pairs=joined(r['all_pairs']),n_source_records=r['n_records'],coordinate_P_conflict=r['conflicting_p'],allele_verified=match,allele_status='exact_unordered_pair' if match else ('ambiguous_minimum_P_alleles' if len(r['pairs'])>1 else 'literal_pair_mismatch_or_missing')))
+    inputs=pd.DataFrame(records);write(inputs,f'inputs_{t}.tsv.gz')
+    edges=read(OUT/'frozen_candidate_mapping_edges.tsv.gz'); actual=edges.merge(inputs,on='variant_index',validate='many_to_one')
+    expected=read(ST25/f'{t}_gene_acat.tsv').set_index('gene');rows=[]
+    for name,x in actual.groupby('gene_symbol',sort=False):
+        pv=x.p.to_numpy(); observed=score.boundary(pv);r=expected.loc[name]
+        ok=len(x)==r.nsnps_matched and np.isclose(observed,r.boundary_p,rtol=1e-11,atol=0) and pv.min()==r.min_p
+        rows.append(dict(gene_symbol=name,trait=t,n_records=len(x),source_n_records=r.nsnps_matched,score=observed,source_score=r.boundary_p,minimum_P=pv.min(),source_minimum_P=r.min_p,passed=ok))
+    validation=pd.DataFrame(rows);write(validation,f'replay_{t}.tsv');check(t+'_all_gene_input_replays',validation.passed.all())
+    candidate_genes=set(read(ST28/'candidate_universe.tsv').gene_symbol)
+    check(t+'_evaluable_membership',set(validation.gene_symbol)==set(expected.loc[expected.index.isin(candidate_genes)&expected.boundary_p.notna()].index))
+    check(t+'_raw_unchanged',before==sha(path))
+    m=dict(trait=t,path=str(path.relative_to(ROOT)),sha256=before,counts=dict(counts),coordinate_keys=len(selected),actual_variant_keys=len(inputs),allele_status_counts=inputs.allele_status.value_counts().to_dict(),replay_genes=len(validation),all_replays_passed=True,script_sha256=sha(OUT/'run.py'))
+    (OUT/f'extract_{t}.json').write_text(json.dumps(m,indent=2)+'\n');write(CHECKS,f'checks_{t}.tsv');print(json.dumps(m),flush=True)
+
+def summarize():
+    old,extra,score,bmod=resources()
+    candidates=read(ST28/'candidate_universe.tsv').set_index('gene_symbol');genes=read(ST25/'boundary_liver_gene_registry.tsv').set_index('gene_symbol')
+    variants=read(OUT/'variant_dictionary.tsv.gz').set_index('variant_index');edges=read(OUT/'frozen_candidate_mapping_edges.tsv.gz')
+    vkey=variants.variant_key.to_dict();coord=variants.coordinate_key.to_dict();block=variants.EUR_block.to_dict()
+    mapsets={n:set(x.variant_index) for n,x in edges.groupby('gene_symbol')}
+    eventsets={};events=[];mins=[];regions=[];checks=[]
+    inputcoverage=[]
+    for t in TRAITS:
+        q=read(OUT/f'inputs_{t}.tsv.gz').set_index('variant_index'); available=set(q.index); verified=set(q.index[q.allele_verified])
+        for name,r in candidates.iterrows():
+            actual=mapsets[name]&available;certain=actual&verified
+            inputcoverage.append(dict(gene_symbol=name,trait=t,supported=bool(genes.loc[name,t+'_support']),n_fixed_variants=len(mapsets[name]),n_actual_variants=len(actual),n_allele_verified_variants=len(certain),actual_coverage=len(actual)/len(mapsets[name])))
+            if not genes.loc[name,t+'_support']:continue
+            eid=name+'__'+t; vals=q.loc[sorted(actual),'p'];mp=vals.min();minids=set(vals.index[vals.eq(mp)]);minverified=minids&verified
+            eventsets[eid]=dict(actual=actual,verified=certain,minimum=minids,minimum_verified=minverified,name=name,trait=t)
+            events.append(dict(event_id=eid,gene_symbol=name,trait=t,B=int(r.B),S=r.S,gene_trait_rank_fraction=genes.loc[name,t+'_rank_pct'],gene_trait_boundary_score=genes.loc[name,t+'_acat_p'],n_fixed_variants=len(mapsets[name]),n_actual_variants=len(actual),n_allele_verified_variants=len(certain),n_minimum_P_variants=len(minids),n_verified_minimum_P_variants=len(minverified),minimum_P=mp,minimum_coordinate_keys=joined(coord[i] for i in minids),minimum_variant_keys=joined(vkey[i] for i in minids),minimum_verified_variant_keys=joined(vkey[i] for i in minverified),minimum_EUR_blocks=joined(block[i] for i in minids),n_actual_EUR_blocks=len({block[i] for i in actual if pd.notna(block[i])}),n_unassigned_variants=sum(pd.isna(block[i]) for i in actual)))
+            for i in sorted(minids):
+                mins.append(dict(event_id=eid,gene_symbol=name,trait=t,variant_index=i,variant_key=vkey[i],coordinate_key=coord[i],EUR_block=block[i],p=mp,allele_verified=i in verified,source_allele_pairs=q.loc[i,'selected_source_allele_pairs'],n_source_records=int(q.loc[i,'n_source_records'])))
+            counts=Counter(block[i] if pd.notna(block[i]) else 'UNASSIGNED' for i in actual)
+            for b,n in counts.items():
+                chosen={i for i in actual if (block[i] if pd.notna(block[i]) else 'UNASSIGNED')==b}
+                regions.append(dict(event_id=eid,gene_symbol=name,trait=t,region_id=b,n_input_variants=n,n_verified_variants=len(chosen&certain),n_minimum_P_variants=len(chosen&minids),n_verified_minimum_P_variants=len(chosen&minverified),fraction_of_event_inputs=n/len(actual)))
+    e=pd.DataFrame(events);mi=pd.DataFrame(mins);er=pd.DataFrame(regions)
+    check('event_B_counts',e.groupby('gene_symbol').size().sort_index().equals(candidates.B.astype(int).sort_index()))
+    write(e,'support_events.tsv');write(mi,'support_event_minimum_variants.tsv');write(pd.DataFrame(inputcoverage),'gene_trait_input_coverage.tsv')
+    cvr=pd.DataFrame(inputcoverage).merge(read(OUT/'gene_annotation_audit.tsv')[['gene_symbol','original_block_missing']],on='gene_symbol',validate='many_to_one')
+    write(cvr.groupby(['original_block_missing','trait']).agg(n_genes=('gene_symbol','size'),supported_genes=('supported','sum'),median_input_coverage=('actual_coverage','median'),minimum_input_coverage=('actual_coverage','min'),median_fixed_variants=('n_fixed_variants','median'),median_actual_variants=('n_actual_variants','median'),median_verified_variants=('n_allele_verified_variants','median')).reset_index(),'missingness_trait_mapping_coverage.tsv')
+    pairs=[]
+    for name,z in e.groupby('gene_symbol'):
+        for a,b in combinations(z.event_id,2):
+            x,y=eventsets[a],eventsets[b];xs,ys=x['actual'],y['actual'];xv,yv=x['verified'],y['verified'];xm,ym=x['minimum'],y['minimum'];xmv,ymv=x['minimum_verified'],y['minimum_verified']
+            ca={coord[i] for i in xs};cb={coord[i] for i in ys};mca={coord[i] for i in xm};mcb={coord[i] for i in ym}
+            samecoord=bool(mca&mcb);sameverified=bool(xmv&ymv);fullyverified=xmv==xm and ymv==ym
+            status='verified_shared_minimum_variant' if sameverified else ('same_coordinate_identity_unresolved' if samecoord else 'different_minimum_coordinates')
+            pairs.append(dict(gene_symbol=name,event_a=a,event_b=b,trait_a=x['trait'],trait_b=y['trait'],n_fixed_variants=len(mapsets[name]),n_a=len(xs),n_b=len(ys),n_intersection=len(xs&ys),n_union=len(xs|ys),actual_map_Jaccard=len(xs&ys)/len(xs|ys),actual_coordinate_Jaccard=len(ca&cb)/len(ca|cb),n_verified_a=len(xv),n_verified_b=len(yv),n_verified_intersection=len(xv&yv),verified_Jaccard=len(xv&yv)/len(xv|yv) if xv|yv else np.nan,identical_actual_sets=xs==ys,identical_verified_sets=(xv==yv) if xv and yv else False,shared_minimum_coordinate=samecoord,shared_verified_minimum_variant=sameverified,identical_minimum_sets=xm==ym,all_minimum_identities_verified=fullyverified,minimum_relation=status,same_minimum_block=bool({block[i] for i in xm if pd.notna(block[i])}&{block[i] for i in ym if pd.notna(block[i])})))
+    p=pd.DataFrame(pairs);write(p,'within_gene_support_event_pairs.tsv')
+    check('pair_denominator',len(p)==sum(math.comb(int(b),2) for b in candidates.B))
+    gp=p.groupby('gene_symbol').agg(n_event_pairs=('event_a','size'),n_shared_minimum_pairs=('shared_verified_minimum_variant','sum'),n_different_minimum_coordinate_pairs=('shared_minimum_coordinate',lambda s:(~s).sum()),median_actual_Jaccard=('actual_map_Jaccard','median'),median_verified_Jaccard=('verified_Jaccard','median')).reset_index()
+    gp['has_shared_and_different_minimum_pairs']=gp.n_shared_minimum_pairs.gt(0)&gp.n_different_minimum_coordinate_pairs.gt(0)
+    write(gp,'per_gene_reuse_summary.tsv')
+    grouping=[]
+    for (t,v),z in mi[mi.allele_verified].groupby(['trait','variant_key']):
+        grouping.append(dict(trait=t,variant_key=v,region_id=z.EUR_block.iloc[0],n_genes=z.gene_symbol.nunique(),n_events=z.event_id.nunique(),genes=joined(z.gene_symbol),events=joined(z.event_id)))
+    gr=pd.DataFrame(grouping).sort_values('n_genes',ascending=False);write(gr,'within_trait_cross_gene_minimum_reuse.tsv')
+    # All 198 comparisons preserved; joining is never an outcome selection.
+    registry=read(BASE/'16_corrected_shared_signal/resolution_index_198.tsv')
+    registered=read(BASE/'16_corrected_shared_signal/registered_198_input_manifest.tsv')
+    rr=registry.merge(registered[['comparison_id','region_id']],on='comparison_id',validate='one_to_one')
+    check('registry198_unique',len(rr)==198 and rr.comparison_id.is_unique)
+    er['comparison_id']=er.region_id+'__'+er.trait
+    cols=['comparison_id','region_code','coverage_eligible','regional_gate_pass','fit_status','resolution_disposition','pair_path','highest_robust_label_allowed']
+    er=er.merge(rr[cols],on='comparison_id',how='left',validate='many_to_one')
+    er['registered']=er.comparison_id.isin(rr.comparison_id)
+    er['signal_pair_evaluable']=er.fit_status.eq('conditional_signal_pair_evaluable')
+    # Check actual inclusion, not merely an interval overlap, in saved pair inputs.
+    er['pair_input_checked']=False
+    er['n_input_coordinates_in_pair']=np.nan;er['n_verified_variants_in_pair']=np.nan;er['n_minimum_coordinates_in_pair']=np.nan;er['n_verified_minimum_variants_in_pair']=np.nan
+    pairchecks=[]
+    for comparison,z in er[er.registered].groupby('comparison_id'):
+        source=rr.set_index('comparison_id').loc[comparison];path=ROOT/str(source.pair_path)
+        if not path.is_file():
+            pairchecks.append(dict(comparison_id=comparison,path=str(source.pair_path),exists=False));continue
+        pdense=read(path)
+        # File contract from the existing dense-coloc adapter: canonical SNP = chr:pos:alleles.
+        keys=read_pair_keys(pdense)
+        coords={k[0] for k in keys};vkeys={k[1] for k in keys}
+        pairchecks.append(dict(comparison_id=comparison,path=str(source.pair_path),exists=True,n_rows=len(pdense),n_unique_keys=len(vkeys),sha256=sha(path)))
+        for ix,r in z.iterrows():
+            s=eventsets[r.event_id];inregion={i for i in s['actual'] if block[i]==r.region_id}
+            er.loc[ix,'pair_input_checked']=True
+            er.loc[ix,'n_input_coordinates_in_pair']=sum(coord[i] in coords for i in inregion)
+            er.loc[ix,'n_verified_variants_in_pair']=sum(vkey[i] in vkeys for i in inregion&s['verified'])
+            er.loc[ix,'n_minimum_coordinates_in_pair']=sum(coord[i] in coords for i in inregion&s['minimum'])
+            er.loc[ix,'n_verified_minimum_variants_in_pair']=sum(vkey[i] in vkeys for i in inregion&s['minimum_verified'])
+    write(er,'event_region_coloc_crosswalk.tsv');write(pairchecks,'existing_coloc_input_checks.tsv')
+    counts=er.groupby('comparison_id').agg(n_candidate_events=('event_id','nunique'),n_candidate_genes=('gene_symbol','nunique'),n_events_with_minimum_in_region=('n_minimum_P_variants',lambda s:s.gt(0).sum()),n_events_verified_minimum_in_pair=('n_verified_minimum_variants_in_pair',lambda s:s.gt(0).sum())).reset_index()
+    ri=rr.merge(counts,on='comparison_id',how='left',validate='one_to_one');ri[counts.columns[1:]]=ri[counts.columns[1:]].fillna(0).astype(int);write(ri,'coloc_registry_198_current_coverage.tsv')
+    write(er.groupby(['region_id','trait','registered','signal_pair_evaluable'],dropna=False).agg(n_events=('event_id','nunique'),n_genes=('gene_symbol','nunique'),n_events_minimum_in_region=('n_minimum_P_variants',lambda s:s.gt(0).sum()),n_events_minimum_in_pair=('n_verified_minimum_variants_in_pair',lambda s:s.gt(0).sum())).reset_index(),'region_trait_event_summary.tsv')
+    annotation=read(OUT/'gene_annotation_audit.tsv').set_index('gene_symbol');gc=[]
+    for name,z in er.groupby('gene_symbol'):
+        ar=annotation.loc[name];gc.append(dict(gene_symbol=name,original_TSS_block=ar.original_EUR_block,audit_TSS_block=ar.audit_final_EUR_block,TSS_block_in_18=ar.audit_final_EUR_block in set(rr.region_id),n_actual_input_regions=z.region_id.nunique(),actual_input_regions=joined(z.region_id),n_registered_event_regions=int(z.registered.sum()),registered_input_regions=joined(z.loc[z.registered,'region_id']),minimum_input_regions=joined(z.loc[z.n_minimum_P_variants.gt(0),'region_id']),registered_minimum_regions=joined(z.loc[z.registered&z.n_minimum_P_variants.gt(0),'region_id']),n_evaluable_event_regions=int(z.signal_pair_evaluable.sum()),n_evaluable_event_regions_with_verified_minimum_in_pair=int((z.signal_pair_evaluable&z.n_verified_minimum_variants_in_pair.gt(0)).sum())))
+    write(gc,'candidate_region_coloc_crosswalk.tsv')
+    # Explicit gene/event/pair metrics. Tied minima produce incidence counts, not independent events.
+    anyrepeat=set(); withintraitrepeat=set()
+    for _,r in p[p.shared_verified_minimum_variant].iterrows():anyrepeat.update([r.event_a,r.event_b])
+    for s in gr.loc[gr.n_genes.gt(1),'events']:withintraitrepeat.update(strings(s))
+    summary=[]
+    def metric(n,num,den,unit,note=''):
+        summary.append(dict(metric=n,numerator=int(num),denominator=int(den),fraction=num/den if den else np.nan,unit=unit,interpretation=note))
+    metric('original_TSS_annotated',annotation.original_EUR_block.notna().sum(),283,'gene')
+    metric('audit_TSS_annotated',annotation.audit_final_EUR_block.notna().sum(),283,'gene','additive_annotation_only_no_model_change')
+    metric('support_event_minimum_all_alleles_verified',e.n_minimum_P_variants.eq(e.n_verified_minimum_P_variants).sum(),len(e),'support_event')
+    metric('within_gene_pair_shared_minimum_coordinate',p.shared_minimum_coordinate.sum(),len(p),'within_gene_support_event_pair')
+    metric('within_gene_pair_shared_verified_minimum_variant',p.shared_verified_minimum_variant.sum(),len(p),'within_gene_support_event_pair','not_a_shared_causal_signal')
+    metric('within_gene_pair_different_minimum_coordinates',(~p.shared_minimum_coordinate).sum(),len(p),'within_gene_support_event_pair','different_minima_do_not_establish_distinct_causal_signals')
+    metric('within_gene_pair_identical_actual_input_sets',p.identical_actual_sets.sum(),len(p),'within_gene_support_event_pair','fixed_map_induced_overlap_not_biological_convergence')
+    metric('events_participating_in_within_gene_minimum_reuse',len(anyrepeat),len(e),'support_event')
+    metric('events_participating_in_within_trait_cross_gene_minimum_reuse',len(withintraitrepeat),len(e),'support_event')
+    metric('genes_with_both_shared_and_different_minima',gp.has_shared_and_different_minimum_pairs.sum(),283,'gene')
+    metric('events_any_input_in_registered_region',er.loc[er.registered,'event_id'].nunique(),len(e),'support_event')
+    metric('events_minimum_in_registered_region',er.loc[er.registered&er.n_minimum_P_variants.gt(0),'event_id'].nunique(),len(e),'support_event')
+    metric('events_any_input_in_evaluable_comparison',er.loc[er.signal_pair_evaluable,'event_id'].nunique(),len(e),'support_event','overlapping_windows_not_independent_coloc_replications')
+    metric('events_verified_minimum_in_evaluable_pair',er.loc[er.signal_pair_evaluable&er.n_verified_minimum_variants_in_pair.gt(0),'event_id'].nunique(),len(e),'support_event')
+    metric('evaluable_registered_region_trait_comparisons',rr.fit_status.eq('conditional_signal_pair_evaluable').sum(),198,'region_trait_comparison')
+    write(summary,'audit_summary.tsv')
+    write(p.groupby(['trait_a','trait_b']).agg(n_gene_pairs=('gene_symbol','size'),shared_minimum_pairs=('shared_verified_minimum_variant','sum'),different_minimum_coordinate_pairs=('shared_minimum_coordinate',lambda s:(~s).sum()),median_input_Jaccard=('actual_map_Jaccard','median')).reset_index(),'trait_pair_reuse_summary.tsv')
+    # Add a region-specific decomposition of minimum variants without treating
+    # these incidences as independent causal signals or additive event counts.
+    vr=mi[mi.allele_verified].groupby(['EUR_block','variant_key'],dropna=False).agg(n_genes=('gene_symbol','nunique'),n_events=('event_id','nunique'),n_traits=('trait','nunique'),traits=('trait',joined),genes=('gene_symbol',joined)).reset_index()
+    write(vr.sort_values(['n_events','n_genes'],ascending=False),'minimum_variant_region_trait_structures.tsv')
+    groups=[]
+    for b,z in mi.groupby('EUR_block',dropna=False):
+        ze=set(z.event_id); event_members=e[e.event_id.isin(ze)]
+        groups.append(dict(region_id=b,n_genes=z.gene_symbol.nunique(),n_events=len(ze),n_traits=z.trait.nunique(),n_minimum_coordinate_keys=z.coordinate_key.nunique(),n_verified_minimum_variant_keys=z.loc[z.allele_verified,'variant_key'].nunique(),traits=joined(z.trait),genes=joined(z.gene_symbol),events=joined(ze)))
+    write(pd.DataFrame(groups).sort_values('n_events',ascending=False),'minimum_region_structures.tsv')
+    # Preserve model outputs and score membership; only add coverage descriptions.
+    check('five_existing_evaluable_comparisons',rr.fit_status.eq('conditional_signal_pair_evaluable').sum()==5)
+    check('event_region_counts_reconcile',er.groupby('event_id').n_input_variants.sum().sort_index().equals(e.set_index('event_id').n_actual_variants.sort_index()))
+    write(CHECKS,'summary_checks.tsv')
+    print(pd.DataFrame(summary).to_string(index=False),flush=True)
+
+def read_pair_keys(d):
+    """Strict schema check; do not infer by column position."""
+    result=[]
+    if {'chr','pos','a1','a2'}<=set(d):
+        for r in d.itertuples(index=False):
+            c=int(r.chr);p=int(r.pos);a=sorted([str(r.a1).upper(),str(r.a2).upper()]);result.append((f'{c}:{p}',f'GRCh37:{c}:{p}:'+':'.join(a)))
+    elif 'snp' in d or 'key' in d:
+        for s in d['snp' if 'snp' in d else 'key']:
+            z=str(s).split(':');assert len(z)==4, s;c=int(z[0].removeprefix('chr'));p=int(z[1]);a=sorted([z[2].upper(),z[3].upper()]);result.append((f'{c}:{p}',f'GRCh37:{c}:{p}:'+':'.join(a)))
+    else:raise ValueError(('Unrecognized existing pair schema',list(d.columns)))
+    return result
+
+def verify():
+    before=read(OUT/'protected_before.tsv');results=[]
+    for r in before.itertuples(index=False):
+        # run.py may receive explicit verification/implementation fixes; never exempt data.
+        if r.path==str((OUT/'run.py').relative_to(ROOT)):continue
+        p=ROOT/r.path;results.append(dict(path=r.path,passed=p.is_file() and sha(p)==r.sha256))
+    write(results,'protected_after.tsv');check('protected_sources_unchanged',all(r['passed'] for r in results))
+    e=read(OUT/'support_events.tsv');p=read(OUT/'within_gene_support_event_pairs.tsv');er=read(OUT/'event_region_coloc_crosswalk.tsv');a=read(OUT/'gene_annotation_audit.tsv')
+    check('event_unique',e.event_id.is_unique)
+    check('event_region_unique',not er.duplicated(['event_id','region_id']).any())
+    check('gene_counts',len(a)==283 and e.gene_symbol.nunique()==283)
+    check('Jaccard_bounds',p.actual_map_Jaccard.between(0,1).all() and p.verified_Jaccard.dropna().between(0,1).all())
+    check('verified_minimum_requires_coordinate_overlap',(~p.shared_verified_minimum_variant|p.shared_minimum_coordinate).all())
+    check('missingness_does_not_modify_model',a.loc[a.original_block_missing,'gene_symbol'].isin(read(ST28/'boundary_EUR_common_model_sample.tsv').gene_symbol).sum()==0)
+    for t in TRAITS:check(t+'_replay',read(OUT/f'replay_{t}.tsv').passed.all())
+    # Independent checks use relational joins instead of the set implementation.
+    edges=read(OUT/'frozen_candidate_mapping_edges.tsv.gz').drop_duplicates()
+    cache={t:read(OUT/f'inputs_{t}.tsv.gz') for t in TRAITS}
+    for ix in np.linspace(0,len(p)-1,25,dtype=int):
+        row=p.iloc[ix];base=edges[edges.gene_symbol.eq(row.gene_symbol)]
+        x=base.merge(cache[row.trait_a],on='variant_index',validate='one_to_one');y=base.merge(cache[row.trait_b],on='variant_index',validate='one_to_one')
+        j=x[['variant_index']].merge(y[['variant_index']],how='outer',indicator=True)
+        check(f'pair_{ix}_independent_Jaccard',np.isclose(j._merge.eq('both').mean(),row.actual_map_Jaccard))
+        xm=x[x.p.eq(x.p.min())&x.allele_verified];ym=y[y.p.eq(y.p.min())&y.allele_verified]
+        check(f'pair_{ix}_independent_minimum',(not xm.merge(ym,on='variant_index').empty)==row.shared_verified_minimum_variant)
+    official={line.split()[1]:line.split()[0] for line in (OUT/'gencode_v19_official_MD5SUMS.txt').read_text().splitlines() if len(line.split())==2}
+    gtf=OUT/'gencode.v19.annotation.gtf.gz'
+    check('official_GENCODE_MD5',hashlib.md5(gtf.read_bytes()).hexdigest()==official[gtf.name])
+    write(CHECKS,'final_validation.tsv')
+    manifest=[dict(path=p.name,bytes=p.stat().st_size,sha256=sha(p)) for p in sorted(OUT.iterdir()) if p.is_file() and p.name not in {'file_manifest.tsv','completion.json'} and p.suffix not in {'.log','.zip'}]
+    write(manifest,'file_manifest.tsv')
+    (OUT/'completion.json').write_text(json.dumps(dict(completed_utc=datetime.now(timezone.utc).isoformat(),status='completed',no_new_models=True,no_coloc_reruns=True,protected_files=len(results),events=len(e),event_pairs=len(p),checks=len(CHECKS),all_passed=True,run_sha256=sha(OUT/'run.py')),indent=2)+'\n')
+    print('PASS',len(CHECKS),'checks;',len(results),'protected files',flush=True)
+
+if __name__=='__main__':
+    parser=argparse.ArgumentParser();parser.add_argument('stage',choices=['prepare','build_map','extract','summarize','verify']);parser.add_argument('trait',nargs='?',choices=TRAITS);args=parser.parse_args()
+    if args.stage=='extract':extract(args.trait)
+    else:globals()[args.stage]()

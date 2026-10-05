@@ -1,0 +1,18 @@
+{
+  "trait": "AST",
+  "path": "data/reference/gwas/external/opengwas/ukb-d-30650_irnt/ukb-d-30650_irnt.vcf.gz",
+  "sha256": "5ee1398beacec213b7624e958f88c11a24e32384bc101c3b6449e9123f46fec3",
+  "counts": {
+    "raw_rows": 13586008,
+    "target_valid_rows": 86110
+  },
+  "coordinate_keys": 86014,
+  "actual_variant_keys": 86014,
+  "allele_status_counts": {
+    "exact_unordered_pair": 85867,
+    "literal_pair_mismatch_or_missing": 147
+  },
+  "replay_genes": 283,
+  "all_replays_passed": true,
+  "script_sha256": "fd0f717daee6f6ec122cde238cfe4ed8b103f017c3906eec62bca5580e42d01d"
+}

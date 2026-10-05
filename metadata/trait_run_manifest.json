@@ -1,0 +1,21 @@
+{
+  "status": "sensitivity_only",
+  "summary": {
+    "neutral_nominees": 5746,
+    "boundary_nominees": 5747,
+    "nominee_entered": 14,
+    "nominee_exited": 13,
+    "B_changed": 32,
+    "S_changed_gt_1e_12": 8286,
+    "neutral_B4": 646,
+    "boundary_B4": 647,
+    "B4_entered": 1,
+    "B4_exited": 0,
+    "S_changed_in_retained_nominees": 859
+  },
+  "HCC_loaded": false,
+  "primary_replaced": false,
+  "models_run": false,
+  "script_sha256": "59fb42e9da1400eb944531bbac08598493c92add075c3030fb6622eefe066c71",
+  "charter_sha256": "627473e3941fc96d87a3ecb5bb40a1a5087d75e2f3af018c1828efba3542cbb9"
+}
