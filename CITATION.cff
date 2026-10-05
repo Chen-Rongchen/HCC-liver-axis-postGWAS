@@ -1,0 +1,25 @@
+cff-version: 1.2.0
+message: "If you use this code or its derived results, please cite this repository and the associated article."
+title: "Regional variant inputs and recurrent liver-trait gene evidence in hepatocellular carcinoma"
+type: software
+version: v1.0.0
+date-released: 2026-10-05
+authors:
+  - family-names: Chen
+    given-names: Rongchen
+  - family-names: Chen
+    given-names: Shengqiang
+  - family-names: Ye
+    given-names: Ziran
+  - family-names: Lou
+    given-names: Zhenbang
+  - family-names: Wei
+    given-names: Xubiao
+  - family-names: Cheng
+    given-names: YuQiang
+  - family-names: Jiang
+    given-names: Yabo
+  - family-names: Cheng
+    given-names: Shuqun
+
+repository-code: "https://github.com/Chen-Rongchen/HCC-liver-axis-postGWAS"
