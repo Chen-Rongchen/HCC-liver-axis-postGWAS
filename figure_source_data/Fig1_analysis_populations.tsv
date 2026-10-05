@@ -1,0 +1,4 @@
+population	n	high	low
+original_model	1652	443	1209
+masked_model	1259	214	1045
+selected_input_audit	283	283	0

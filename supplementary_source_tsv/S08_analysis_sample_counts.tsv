@@ -1,0 +1,5 @@
+branch	ancestry	n	high	low	high_blocks	blocks
+boundary	EUR	1652	443	1209	41	169
+boundary	EAS	1652	443	1209	32	148
+neutral	EUR	1652	442	1210	40	169
+neutral	EAS	1652	442	1210	32	148

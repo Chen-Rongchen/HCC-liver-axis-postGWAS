@@ -1,0 +1,17 @@
+branch	S_quintile	phase	high	n	EUR_blocks
+boundary	4	before	0	933	124
+boundary	4	before	1	55	6
+boundary	4	retained	0	716	91
+boundary	4	retained	1	33	5
+boundary	5	before	0	502	67
+boundary	5	before	1	458	37
+boundary	5	retained	0	493	66
+boundary	5	retained	1	410	37
+neutral	4	before	0	934	124
+neutral	4	before	1	55	6
+neutral	4	retained	0	716	91
+neutral	4	retained	1	33	5
+neutral	5	before	0	502	67
+neutral	5	before	1	457	36
+neutral	5	retained	0	494	66
+neutral	5	retained	1	409	36

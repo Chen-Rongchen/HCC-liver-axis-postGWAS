@@ -1,0 +1,4 @@
+category	n_pairs	denominator
+Shared minimum, no floor ties	464	3224
+Shared minimum, floor ties	80	3224
+Disjoint minimum-coordinate sets	2680	3224

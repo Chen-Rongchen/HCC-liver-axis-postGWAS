@@ -1,0 +1,284 @@
+gene_symbol	n_events	n_min_events	any_min_in_R	class	tss_in_R	input_in_R	tss_unresolved_v19	audit_tss_in_R	four_class	audit_final_EUR_block	retained_by_rule_A	reporting_scope
+ABCG2	4	1	True	input_only	False	True	False	False	input_only	EUR:chr4:87534648-89238028	False	original_EUR_top5_B_ge4_selected_set
+ABHD1	4	3	True	input_only	False	True	False	False	input_only	EUR:chr2:26894985-28598777	False	original_EUR_top5_B_ge4_selected_set
+ABT1	5	0	False	retained	False	False	False	False	neither	EUR:chr6:25684587-26791233	True	original_EUR_top5_B_ge4_selected_set
+ACOT13	5	0	False	retained	False	False	False	False	neither	EUR:chr6:23936619-24852275	True	original_EUR_top5_B_ge4_selected_set
+AFF1	4	1	True	input_only	False	True	False	False	input_only	EUR:chr4:87534648-89238028	False	original_EUR_top5_B_ge4_selected_set
+AGBL5	4	3	True	input_only	False	True	False	False	input_only	EUR:chr2:26894985-28598777	False	original_EUR_top5_B_ge4_selected_set
+ARHGAP8	5	5	True	input_only	False	True	False	False	input_only	EUR:chr22:44995308-46470495	False	original_EUR_top5_B_ge4_selected_set
+ARMC6	7	5	True	input_only	False	True	False	False	input_only	EUR:chr19:18409862-19877471	False	original_EUR_top5_B_ge4_selected_set
+ASB2	5	4	True	input_only	False	True	False		input_only	EUR:chr14:94325285-95750867	False	original_EUR_top5_B_ge4_selected_set
+ATP13A1	7	5	True	input_only	False	True	False	False	input_only	EUR:chr19:18409862-19877471	False	original_EUR_top5_B_ge4_selected_set
+ATRAID	4	3	True	input_only	False	True	False	False	input_only	EUR:chr2:26894985-28598777	False	original_EUR_top5_B_ge4_selected_set
+BABAM2	4	3	True	input_only	False	True	False	False	input_only	EUR:chr2:26894985-28598777	False	original_EUR_top5_B_ge4_selected_set
+BIK	5	5	True	input_only	False	True	False	False	input_only	EUR:chr22:42690818-43714200	False	original_EUR_top5_B_ge4_selected_set
+BPNT1	4	0	False	input_only	False	True	False	False	input_only	EUR:chr1:219590571-221858231	False	original_EUR_top5_B_ge4_selected_set
+BTN1A1	5	0	False	retained	False	False	False	False	neither	EUR:chr6:25684587-26791233	True	original_EUR_top5_B_ge4_selected_set
+BTN2A1	5	0	False	retained	False	False	False	False	neither	EUR:chr6:25684587-26791233	True	original_EUR_top5_B_ge4_selected_set
+BTN2A2	5	0	False	retained	False	False	False	False	neither	EUR:chr6:25684587-26791233	True	original_EUR_top5_B_ge4_selected_set
+BTN2A3P	5	0	False	retained	False	False	False		neither		True	original_EUR_top5_B_ge4_selected_set
+BTN3A1	5	0	False	retained	False	False	False	False	neither	EUR:chr6:25684587-26791233	True	original_EUR_top5_B_ge4_selected_set
+BTN3A2	5	0	False	retained	False	False	False	False	neither	EUR:chr6:25684587-26791233	True	original_EUR_top5_B_ge4_selected_set
+BTN3A3	5	0	False	retained	False	False	False	False	neither	EUR:chr6:25684587-26791233	True	original_EUR_top5_B_ge4_selected_set
+C1orf115	4	0	False	input_only	False	True	False	False	input_only	EUR:chr1:219590571-221858231	False	original_EUR_top5_B_ge4_selected_set
+C2orf16	4	3	True	input_only	False	True	False	False	input_only	EUR:chr2:26894985-28598777	False	original_EUR_top5_B_ge4_selected_set
+C4orf36	4	1	True	input_only	False	True	False	False	input_only	EUR:chr4:87534648-89238028	False	original_EUR_top5_B_ge4_selected_set
+C6orf62	5	0	False	retained	False	False	False	False	neither	EUR:chr6:23936619-24852275	True	original_EUR_top5_B_ge4_selected_set
+CAD	4	3	True	input_only	False	True	False	False	input_only	EUR:chr2:26894985-28598777	False	original_EUR_top5_B_ge4_selected_set
+CARMIL1	5	0	False	retained	False	False	False	False	neither	EUR:chr6:24852275-25684587	True	original_EUR_top5_B_ge4_selected_set
+CCDC121	4	3	True	input_only	False	True	False	False	input_only	EUR:chr2:26894985-28598777	False	original_EUR_top5_B_ge4_selected_set
+CCDC197	5	4	True	input_only	False	True	True		input_only		False	original_EUR_top5_B_ge4_selected_set
+CENPA	4	3	True	input_only	False	True	False	False	input_only	EUR:chr2:26894985-28598777	False	original_EUR_top5_B_ge4_selected_set
+CERS1	7	5	True	input_only	False	True	False	False	input_only	EUR:chr19:18409862-19877471	False	original_EUR_top5_B_ge4_selected_set
+CGREF1	4	3	True	input_only	False	True	False	False	input_only	EUR:chr2:26894985-28598777	False	original_EUR_top5_B_ge4_selected_set
+CIB4	4	3	True	input_only	False	True	False	False	input_only	EUR:chr2:24686918-26894985	False	original_EUR_top5_B_ge4_selected_set
+CILP2	7	5	True	input_only	False	True	False	False	input_only	EUR:chr19:18409862-19877471	False	original_EUR_top5_B_ge4_selected_set
+CLMN	4	4	True	input_only	False	True	False	False	input_only	EUR:chr14:95750867-96262415	False	original_EUR_top5_B_ge4_selected_set
+COMP	7	5	True	input_only	False	True	False	False	input_only	EUR:chr19:18409862-19877471	False	original_EUR_top5_B_ge4_selected_set
+COPE	7	5	True	input_only	False	True	False	False	input_only	EUR:chr19:18409862-19877471	False	original_EUR_top5_B_ge4_selected_set
+CRLF1	7	5	True	input_only	False	True	False	False	input_only	EUR:chr19:18409862-19877471	False	original_EUR_top5_B_ge4_selected_set
+CRTC1	7	5	True	input_only	False	True	False	False	input_only	EUR:chr19:18409862-19877471	False	original_EUR_top5_B_ge4_selected_set
+DDX24	5	4	True	input_only	False	True	False		input_only	EUR:chr14:94325285-95750867	False	original_EUR_top5_B_ge4_selected_set
+DDX49	7	5	True	input_only	False	True	False	False	input_only	EUR:chr19:18409862-19877471	False	original_EUR_top5_B_ge4_selected_set
+DICER1	4	4	True	input_only	False	True	False	False	input_only	EUR:chr14:94325285-95750867	False	original_EUR_top5_B_ge4_selected_set
+DICER1-AS1	4	4	True	input_only	False	True	False	False	input_only	EUR:chr14:94325285-95750867	False	original_EUR_top5_B_ge4_selected_set
+DMP1	4	1	True	input_only	False	True	False	False	input_only	EUR:chr4:87534648-89238028	False	original_EUR_top5_B_ge4_selected_set
+DNAJC5G	4	3	True	input_only	False	True	False	False	input_only	EUR:chr2:26894985-28598777	False	original_EUR_top5_B_ge4_selected_set
+DPYSL5	4	3	True	input_only	False	True	False	False	input_only	EUR:chr2:26894985-28598777	False	original_EUR_top5_B_ge4_selected_set
+DSPP	4	1	True	input_only	False	True	False	False	input_only	EUR:chr4:87534648-89238028	False	original_EUR_top5_B_ge4_selected_set
+DUSP10	4	0	False	retained	False	False	False	False	neither	EUR:chr1:221858231-222230220	True	original_EUR_top5_B_ge4_selected_set
+EFCAB6	5	5	True	input_only	False	True	False	False	input_only	EUR:chr22:43714200-44995308	False	original_EUR_top5_B_ge4_selected_set
+EIF2B4	4	3	True	input_only	False	True	False	False	input_only	EUR:chr2:26894985-28598777	False	original_EUR_top5_B_ge4_selected_set
+ELL	7	5	True	input_only	False	True	False	False	input_only	EUR:chr19:18409862-19877471	False	original_EUR_top5_B_ge4_selected_set
+EMILIN1	4	3	True	input_only	False	True	False	False	input_only	EUR:chr2:26894985-28598777	False	original_EUR_top5_B_ge4_selected_set
+EPRS1	4	0	False	input_only	False	True	False	False	input_only	EUR:chr1:219590571-221858231	False	original_EUR_top5_B_ge4_selected_set
+FAM166C	4	3	True	input_only	False	True	False	False	input_only	EUR:chr2:24686918-26894985	False	original_EUR_top5_B_ge4_selected_set
+FAM181A	5	4	True	input_only	False	True	False		input_only	EUR:chr14:94325285-95750867	False	original_EUR_top5_B_ge4_selected_set
+FAM181A-AS1	5	4	True	input_only	False	True	False		input_only	EUR:chr14:94325285-95750867	False	original_EUR_top5_B_ge4_selected_set
+FKBP8	7	5	True	input_only	False	True	False	False	input_only	EUR:chr19:18409862-19877471	False	original_EUR_top5_B_ge4_selected_set
+FNDC4	4	3	True	input_only	False	True	False	False	input_only	EUR:chr2:26894985-28598777	False	original_EUR_top5_B_ge4_selected_set
+FOSL2	4	3	True	input_only	False	True	False	False	input_only	EUR:chr2:28598777-29217559	False	original_EUR_top5_B_ge4_selected_set
+FOSL2-AS1	4	3	True	input_only	False	True	False	False	input_only	EUR:chr2:28598777-29217559	False	original_EUR_top5_B_ge4_selected_set
+GATAD2A	7	5	True	input_only	False	True	False	False	input_only	EUR:chr19:18409862-19877471	False	original_EUR_top5_B_ge4_selected_set
+GDF1	7	5	True	input_only	False	True	False	False	input_only	EUR:chr19:18409862-19877471	False	original_EUR_top5_B_ge4_selected_set
+GDF15	7	5	True	input_only	False	True	False	False	input_only	EUR:chr19:18409862-19877471	False	original_EUR_top5_B_ge4_selected_set
+GMIP	7	5	True	input_only	False	True	False	False	input_only	EUR:chr19:18409862-19877471	False	original_EUR_top5_B_ge4_selected_set
+GMNN	5	0	False	retained	False	False	False	False	neither	EUR:chr6:23936619-24852275	True	original_EUR_top5_B_ge4_selected_set
+GPN1	4	3	True	input_only	False	True	False	False	input_only	EUR:chr2:26894985-28598777	False	original_EUR_top5_B_ge4_selected_set
+GPX5	6	0	False	retained	False	False	False		neither	EUR:chr6:28017819-28917608	True	original_EUR_top5_B_ge4_selected_set
+GPX6	6	0	False	retained	False	False	False		neither	EUR:chr6:28017819-28917608	True	original_EUR_top5_B_ge4_selected_set
+GSC	5	4	True	input_only	False	True	False	False	input_only	EUR:chr14:94325285-95750867	False	original_EUR_top5_B_ge4_selected_set
+GTF3C2	4	3	True	input_only	False	True	False	False	input_only	EUR:chr2:26894985-28598777	False	original_EUR_top5_B_ge4_selected_set
+GUSBP2	5	0	False	retained	False	False	False		neither		True	original_EUR_top5_B_ge4_selected_set
+H1-1	4	0	False	retained	False	False	False	False	neither	EUR:chr6:25684587-26791233	True	original_EUR_top5_B_ge4_selected_set
+H1-2	4	0	False	retained	False	False	False	False	neither	EUR:chr6:25684587-26791233	True	original_EUR_top5_B_ge4_selected_set
+H1-3	5	0	False	retained	False	False	False	False	neither	EUR:chr6:25684587-26791233	True	original_EUR_top5_B_ge4_selected_set
+H1-4	5	0	False	retained	False	False	False	False	neither	EUR:chr6:25684587-26791233	True	original_EUR_top5_B_ge4_selected_set
+H1-5	6	0	False	retained	False	False	False	False	neither	EUR:chr6:26791233-28017819	True	original_EUR_top5_B_ge4_selected_set
+H1-6	4	0	False	retained	False	False	False	False	neither	EUR:chr6:25684587-26791233	True	original_EUR_top5_B_ge4_selected_set
+H2AC1	5	0	False	retained	False	False	False	False	neither	EUR:chr6:25684587-26791233	True	original_EUR_top5_B_ge4_selected_set
+H2AC11	5	0	False	retained	False	False	False	False	neither	EUR:chr6:26791233-28017819	True	original_EUR_top5_B_ge4_selected_set
+H2AC12	5	0	False	retained_tss_unresolved	False	False	True	False	neither	EUR:chr6:26791233-28017819	True	original_EUR_top5_B_ge4_selected_set
+H2AC13	6	0	False	retained	False	False	False	False	neither	EUR:chr6:26791233-28017819	True	original_EUR_top5_B_ge4_selected_set
+H2AC14	6	0	False	retained_tss_unresolved	False	False	True	False	neither	EUR:chr6:26791233-28017819	True	original_EUR_top5_B_ge4_selected_set
+H2AC15	6	0	False	retained_tss_unresolved	False	False	True	False	neither	EUR:chr6:26791233-28017819	True	original_EUR_top5_B_ge4_selected_set
+H2AC16	6	0	False	retained_tss_unresolved	False	False	True	False	neither	EUR:chr6:26791233-28017819	True	original_EUR_top5_B_ge4_selected_set
+H2AC17	6	0	False	retained_tss_unresolved	False	False	True	False	neither	EUR:chr6:26791233-28017819	True	original_EUR_top5_B_ge4_selected_set
+H2AC4	4	0	False	retained_tss_unresolved	False	False	True	False	neither	EUR:chr6:25684587-26791233	True	original_EUR_top5_B_ge4_selected_set
+H2AC6	4	0	False	retained	False	False	False	False	neither	EUR:chr6:25684587-26791233	True	original_EUR_top5_B_ge4_selected_set
+H2AC7	5	0	False	retained	False	False	False	False	neither	EUR:chr6:25684587-26791233	True	original_EUR_top5_B_ge4_selected_set
+H2AC8	5	0	False	retained_tss_unresolved	False	False	True	False	neither	EUR:chr6:25684587-26791233	True	original_EUR_top5_B_ge4_selected_set
+H2BC1	5	0	False	retained	False	False	False	False	neither	EUR:chr6:25684587-26791233	True	original_EUR_top5_B_ge4_selected_set
+H2BC10	5	0	False	retained_tss_unresolved	False	False	True	False	neither	EUR:chr6:25684587-26791233	True	original_EUR_top5_B_ge4_selected_set
+H2BC11	5	0	False	retained	False	False	False	False	neither	EUR:chr6:26791233-28017819	True	original_EUR_top5_B_ge4_selected_set
+H2BC12	5	0	False	retained	False	False	False	False	neither	EUR:chr6:26791233-28017819	True	original_EUR_top5_B_ge4_selected_set
+H2BC13	6	0	False	retained	False	False	False	False	neither	EUR:chr6:26791233-28017819	True	original_EUR_top5_B_ge4_selected_set
+H2BC14	6	0	False	retained_tss_unresolved	False	False	True	False	neither	EUR:chr6:26791233-28017819	True	original_EUR_top5_B_ge4_selected_set
+H2BC15	6	0	False	retained	False	False	False	False	neither	EUR:chr6:26791233-28017819	True	original_EUR_top5_B_ge4_selected_set
+H2BC17	6	0	False	retained_tss_unresolved	False	False	True	False	neither	EUR:chr6:26791233-28017819	True	original_EUR_top5_B_ge4_selected_set
+H2BC3	4	0	False	retained_tss_unresolved	False	False	True	False	neither	EUR:chr6:25684587-26791233	True	original_EUR_top5_B_ge4_selected_set
+H2BC4	4	0	False	retained	False	False	False	False	neither	EUR:chr6:25684587-26791233	True	original_EUR_top5_B_ge4_selected_set
+H2BC5	5	0	False	retained	False	False	False	False	neither	EUR:chr6:25684587-26791233	True	original_EUR_top5_B_ge4_selected_set
+H2BC6	5	0	False	retained_tss_unresolved	False	False	True	False	neither	EUR:chr6:25684587-26791233	True	original_EUR_top5_B_ge4_selected_set
+H2BC7	5	0	False	retained_tss_unresolved	False	False	True	False	neither	EUR:chr6:25684587-26791233	True	original_EUR_top5_B_ge4_selected_set
+H2BC8	5	0	False	retained_tss_unresolved	False	False	True	False	neither	EUR:chr6:25684587-26791233	True	original_EUR_top5_B_ge4_selected_set
+H2BC9	5	0	False	retained_tss_unresolved	False	False	True	False	neither	EUR:chr6:25684587-26791233	True	original_EUR_top5_B_ge4_selected_set
+H3C1	4	0	False	retained_tss_unresolved	False	False	True	False	neither	EUR:chr6:25684587-26791233	True	original_EUR_top5_B_ge4_selected_set
+H3C10	6	0	False	retained_tss_unresolved	False	False	True	False	neither	EUR:chr6:26791233-28017819	True	original_EUR_top5_B_ge4_selected_set
+H3C11	6	0	False	retained_tss_unresolved	False	False	True	False	neither	EUR:chr6:26791233-28017819	True	original_EUR_top5_B_ge4_selected_set
+H3C12	6	0	False	retained	False	False	False	False	neither	EUR:chr6:26791233-28017819	True	original_EUR_top5_B_ge4_selected_set
+H3C2	4	0	False	retained_tss_unresolved	False	False	True	False	neither	EUR:chr6:25684587-26791233	True	original_EUR_top5_B_ge4_selected_set
+H3C3	4	0	False	retained_tss_unresolved	False	False	True	False	neither	EUR:chr6:25684587-26791233	True	original_EUR_top5_B_ge4_selected_set
+H3C4	5	0	False	retained	False	False	False	False	neither	EUR:chr6:25684587-26791233	True	original_EUR_top5_B_ge4_selected_set
+H3C6	5	0	False	retained_tss_unresolved	False	False	True	False	neither	EUR:chr6:25684587-26791233	True	original_EUR_top5_B_ge4_selected_set
+H3C7	5	0	False	retained_tss_unresolved	False	False	True	False	neither	EUR:chr6:25684587-26791233	True	original_EUR_top5_B_ge4_selected_set
+H3C8	5	0	False	retained_tss_unresolved	False	False	True	False	neither	EUR:chr6:25684587-26791233	True	original_EUR_top5_B_ge4_selected_set
+H4C1	4	0	False	retained_tss_unresolved	False	False	True	False	neither	EUR:chr6:25684587-26791233	True	original_EUR_top5_B_ge4_selected_set
+H4C11	6	0	False	retained	False	False	False	False	neither	EUR:chr6:26791233-28017819	True	original_EUR_top5_B_ge4_selected_set
+H4C12	6	0	False	retained_tss_unresolved	False	False	True	False	neither	EUR:chr6:26791233-28017819	True	original_EUR_top5_B_ge4_selected_set
+H4C13	6	0	False	retained_tss_unresolved	False	False	True	False	neither	EUR:chr6:26791233-28017819	True	original_EUR_top5_B_ge4_selected_set
+H4C2	4	0	False	retained_tss_unresolved	False	False	True	False	neither	EUR:chr6:25684587-26791233	True	original_EUR_top5_B_ge4_selected_set
+H4C3	4	0	False	retained	False	False	False	False	neither	EUR:chr6:25684587-26791233	True	original_EUR_top5_B_ge4_selected_set
+H4C4	5	0	False	retained_tss_unresolved	False	False	True	False	neither	EUR:chr6:25684587-26791233	True	original_EUR_top5_B_ge4_selected_set
+H4C5	5	0	False	retained_tss_unresolved	False	False	True	False	neither	EUR:chr6:25684587-26791233	True	original_EUR_top5_B_ge4_selected_set
+H4C6	5	0	False	retained_tss_unresolved	False	False	True	False	neither	EUR:chr6:25684587-26791233	True	original_EUR_top5_B_ge4_selected_set
+H4C7	5	0	False	retained_tss_unresolved	False	False	True	False	neither	EUR:chr6:25684587-26791233	True	original_EUR_top5_B_ge4_selected_set
+H4C8	5	0	False	retained	False	False	False	False	neither	EUR:chr6:25684587-26791233	True	original_EUR_top5_B_ge4_selected_set
+H4C9	5	0	False	retained_tss_unresolved	False	False	True	False	neither	EUR:chr6:26791233-28017819	True	original_EUR_top5_B_ge4_selected_set
+HAPLN4	7	5	True	input_only	False	True	False	False	input_only	EUR:chr19:18409862-19877471	False	original_EUR_top5_B_ge4_selected_set
+HFE	4	0	False	retained	False	False	False	False	neither	EUR:chr6:25684587-26791233	True	original_EUR_top5_B_ge4_selected_set
+HLX	4	0	False	input_only	False	True	False	False	input_only	EUR:chr1:219590571-221858231	False	original_EUR_top5_B_ge4_selected_set
+HMGN4	5	0	False	retained	False	False	False	False	neither	EUR:chr6:25684587-26791233	True	original_EUR_top5_B_ge4_selected_set
+HOMER3	7	5	True	input_only	False	True	False	False	input_only	EUR:chr19:18409862-19877471	False	original_EUR_top5_B_ge4_selected_set
+HSD17B11	4	1	True	input_only	False	True	False	False	input_only	EUR:chr4:87534648-89238028	False	original_EUR_top5_B_ge4_selected_set
+IARS2	4	0	False	input_only	False	True	False	False	input_only	EUR:chr1:219590571-221858231	False	original_EUR_top5_B_ge4_selected_set
+IBSP	4	1	True	input_only	False	True	False	False	input_only	EUR:chr4:87534648-89238028	False	original_EUR_top5_B_ge4_selected_set
+IFI27	5	4	True	input_only	False	True	False		input_only	EUR:chr14:94325285-95750867	False	original_EUR_top5_B_ge4_selected_set
+IFI27L1	5	4	True	input_only	False	True	False		input_only	EUR:chr14:94325285-95750867	False	original_EUR_top5_B_ge4_selected_set
+IFI27L2	5	4	True	input_only	False	True	False		input_only	EUR:chr14:94325285-95750867	False	original_EUR_top5_B_ge4_selected_set
+IFI30	4	0	False	input_only	False	True	False	False	input_only	EUR:chr19:16374416-18409862	False	original_EUR_top5_B_ge4_selected_set
+IFT172	4	3	True	input_only	False	True	False	False	input_only	EUR:chr2:26894985-28598777	False	original_EUR_top5_B_ge4_selected_set
+IQCN	7	6	True	input_only	False	True	False	False	input_only	EUR:chr19:16374416-18409862	False	original_EUR_top5_B_ge4_selected_set
+ISYNA1	7	5	True	input_only	False	True	False	False	input_only	EUR:chr19:18409862-19877471	False	original_EUR_top5_B_ge4_selected_set
+JUND	7	6	True	input_only	False	True	False	False	input_only	EUR:chr19:16374416-18409862	False	original_EUR_top5_B_ge4_selected_set
+KCNK3	4	3	True	input_only	False	True	False	False	input_only	EUR:chr2:26894985-28598777	False	original_EUR_top5_B_ge4_selected_set
+KHK	4	3	True	input_only	False	True	False	False	input_only	EUR:chr2:26894985-28598777	False	original_EUR_top5_B_ge4_selected_set
+KIAA0319	5	0	False	retained	False	False	False	False	neither	EUR:chr6:23936619-24852275	True	original_EUR_top5_B_ge4_selected_set
+KLHL26	7	5	True	input_only	False	True	False	False	input_only	EUR:chr19:18409862-19877471	False	original_EUR_top5_B_ge4_selected_set
+KLHL8	4	1	True	input_only	False	True	False	False	input_only	EUR:chr4:87534648-89238028	False	original_EUR_top5_B_ge4_selected_set
+KRTCAP3	4	3	True	input_only	False	True	False	False	input_only	EUR:chr2:26894985-28598777	False	original_EUR_top5_B_ge4_selected_set
+KXD1	7	5	True	input_only	False	True	False	False	input_only	EUR:chr19:18409862-19877471	False	original_EUR_top5_B_ge4_selected_set
+LPAR2	7	5	True	input_only	False	True	False	False	input_only	EUR:chr19:18409862-19877471	False	original_EUR_top5_B_ge4_selected_set
+LRRC25	7	5	True	input_only	False	True	False	False	input_only	EUR:chr19:18409862-19877471	False	original_EUR_top5_B_ge4_selected_set
+LSM4	7	6	True	input_only	False	True	False	False	input_only	EUR:chr19:18409862-19877471	False	original_EUR_top5_B_ge4_selected_set
+MAPK10	4	1	True	input_only	False	True	False	False	input_only	EUR:chr4:86930609-87534648	False	original_EUR_top5_B_ge4_selected_set
+MAPRE3	4	3	True	input_only	False	True	False	False	input_only	EUR:chr2:26894985-28598777	False	original_EUR_top5_B_ge4_selected_set
+MARK1	4	0	False	input_only	False	True	False	False	input_only	EUR:chr1:219590571-221858231	False	original_EUR_top5_B_ge4_selected_set
+MAST3	5	0	False	tss_and_input	True	True	False	True	both	EUR:chr19:16374416-18409862	False	original_EUR_top5_B_ge4_selected_set
+MAU2	7	5	True	tss_and_input	True	True	False	True	both	EUR:chr19:18409862-19877471	False	original_EUR_top5_B_ge4_selected_set
+MCAT	5	5	True	input_only	False	True	False	False	input_only	EUR:chr22:42690818-43714200	False	original_EUR_top5_B_ge4_selected_set
+MEPE	4	1	True	input_only	False	True	False	False	input_only	EUR:chr4:87534648-89238028	False	original_EUR_top5_B_ge4_selected_set
+MPPED1	5	5	True	input_only	False	True	False	False	input_only	EUR:chr22:43714200-44995308	False	original_EUR_top5_B_ge4_selected_set
+MPV17	4	3	True	input_only	False	True	False	False	input_only	EUR:chr2:26894985-28598777	False	original_EUR_top5_B_ge4_selected_set
+MPV17L2	4	0	False	input_only	False	True	False	False	input_only	EUR:chr19:16374416-18409862	False	original_EUR_top5_B_ge4_selected_set
+MRPL33	4	3	True	input_only	False	True	False	False	input_only	EUR:chr2:26894985-28598777	False	original_EUR_top5_B_ge4_selected_set
+MTARC1	4	0	False	input_only	False	True	False	False	input_only	EUR:chr1:219590571-221858231	False	original_EUR_top5_B_ge4_selected_set
+MTARC2	4	0	False	input_only	False	True	False	False	input_only	EUR:chr1:219590571-221858231	False	original_EUR_top5_B_ge4_selected_set
+NCAN	7	5	True	input_only	False	True	False	False	input_only	EUR:chr19:18409862-19877471	False	original_EUR_top5_B_ge4_selected_set
+NDUFA13	7	5	True	input_only	False	True	False	False	input_only	EUR:chr19:18409862-19877471	False	original_EUR_top5_B_ge4_selected_set
+NKAPL	6	0	False	retained	False	False	False	False	neither	EUR:chr6:28017819-28917608	True	original_EUR_top5_B_ge4_selected_set
+NR2C2AP	7	5	True	input_only	False	True	False	False	input_only	EUR:chr19:18409862-19877471	False	original_EUR_top5_B_ge4_selected_set
+NRBP1	4	3	True	input_only	False	True	False	False	input_only	EUR:chr2:26894985-28598777	False	original_EUR_top5_B_ge4_selected_set
+NUDT9	4	1	True	input_only	False	True	False	False	input_only	EUR:chr4:87534648-89238028	False	original_EUR_top5_B_ge4_selected_set
+OR12D2	6	0	False	retained	False	False	False		neither	EUR:chr6:28917608-29737971	True	original_EUR_top5_B_ge4_selected_set
+OR14J1	6	0	False	retained	False	False	False		neither	EUR:chr6:28917608-29737971	True	original_EUR_top5_B_ge4_selected_set
+OR2B2	6	0	False	retained	False	False	False	False	neither	EUR:chr6:26791233-28017819	True	original_EUR_top5_B_ge4_selected_set
+OR2B3	6	0	False	retained	False	False	False		neither	EUR:chr6:28917608-29737971	True	original_EUR_top5_B_ge4_selected_set
+OR2B6	6	0	False	retained	False	False	False	False	neither	EUR:chr6:26791233-28017819	True	original_EUR_top5_B_ge4_selected_set
+OR2J2	6	0	False	retained	False	False	False		neither	EUR:chr6:28917608-29737971	True	original_EUR_top5_B_ge4_selected_set
+OR2J3	6	0	False	retained	False	False	False		neither	EUR:chr6:28917608-29737971	True	original_EUR_top5_B_ge4_selected_set
+OR2W1	6	0	False	retained	False	False	False		neither	EUR:chr6:28917608-29737971	True	original_EUR_top5_B_ge4_selected_set
+OR5V1	6	0	False	retained	False	False	False		neither	EUR:chr6:28917608-29737971	True	original_EUR_top5_B_ge4_selected_set
+OTOF	4	3	True	input_only	False	True	False	False	input_only	EUR:chr2:24686918-26894985	False	original_EUR_top5_B_ge4_selected_set
+OTUB2	5	4	True	input_only	False	True	False		input_only	EUR:chr14:94325285-95750867	False	original_EUR_top5_B_ge4_selected_set
+PACSIN2	5	5	True	input_only	False	True	False	False	input_only	EUR:chr22:42690818-43714200	False	original_EUR_top5_B_ge4_selected_set
+PARVB	5	5	True	input_only	False	True	False	False	input_only	EUR:chr22:43714200-44995308	False	original_EUR_top5_B_ge4_selected_set
+PARVG	5	5	True	input_only	False	True	False	False	input_only	EUR:chr22:43714200-44995308	False	original_EUR_top5_B_ge4_selected_set
+PBX4	7	5	True	input_only	False	True	False	False	input_only	EUR:chr19:18409862-19877471	False	original_EUR_top5_B_ge4_selected_set
+PDE4C	6	0	False	input_only	False	True	False	False	input_only	EUR:chr19:16374416-18409862	False	original_EUR_top5_B_ge4_selected_set
+PGBD1	6	0	False	retained	False	False	False	False	neither	EUR:chr6:28017819-28917608	True	original_EUR_top5_B_ge4_selected_set
+PGPEP1	7	5	True	input_only	False	True	False	False	input_only	EUR:chr19:18409862-19877471	False	original_EUR_top5_B_ge4_selected_set
+PHF21B	5	5	True	input_only	False	True	False	False	input_only	EUR:chr22:44995308-46470495	False	original_EUR_top5_B_ge4_selected_set
+PIK3R2	4	0	False	input_only	False	True	False	False	input_only	EUR:chr19:16374416-18409862	False	original_EUR_top5_B_ge4_selected_set
+PKD2	4	1	True	input_only	False	True	False	False	input_only	EUR:chr4:87534648-89238028	False	original_EUR_top5_B_ge4_selected_set
+PLB1	4	3	True	input_only	False	True	False	False	input_only	EUR:chr2:28598777-29217559	False	original_EUR_top5_B_ge4_selected_set
+PNPLA5	5	5	True	input_only	False	True	False	False	input_only	EUR:chr22:43714200-44995308	False	original_EUR_top5_B_ge4_selected_set
+POM121L2	5	0	False	retained	False	False	False	False	neither	EUR:chr6:26791233-28017819	True	original_EUR_top5_B_ge4_selected_set
+PPM1G	4	3	True	input_only	False	True	False	False	input_only	EUR:chr2:26894985-28598777	False	original_EUR_top5_B_ge4_selected_set
+PPP4R4	5	4	True	input_only	False	True	False		input_only	EUR:chr14:94325285-95750867	False	original_EUR_top5_B_ge4_selected_set
+PREB	4	3	True	input_only	False	True	False	False	input_only	EUR:chr2:26894985-28598777	False	original_EUR_top5_B_ge4_selected_set
+PRIMA1	5	4	True	input_only	False	True	False		input_only	EUR:chr14:93132299-94325285	False	original_EUR_top5_B_ge4_selected_set
+PRR30	4	3	True	input_only	False	True	False	False	input_only	EUR:chr2:26894985-28598777	False	original_EUR_top5_B_ge4_selected_set
+PRR5	5	5	True	input_only	False	True	False	False	input_only	EUR:chr22:44995308-46470495	False	original_EUR_top5_B_ge4_selected_set
+PRR5-ARHGAP8	5	5	True	input_only	False	True	False	False	input_only	EUR:chr22:44995308-46470495	False	original_EUR_top5_B_ge4_selected_set
+PRSS16	5	0	False	retained	False	False	False	False	neither	EUR:chr6:26791233-28017819	True	original_EUR_top5_B_ge4_selected_set
+PTPN13	4	1	True	input_only	False	True	False	False	input_only	EUR:chr4:86930609-87534648	False	original_EUR_top5_B_ge4_selected_set
+RAB3A	4	0	False	input_only	False	True	False	False	input_only	EUR:chr19:16374416-18409862	False	original_EUR_top5_B_ge4_selected_set
+RAB3GAP2	4	0	False	input_only	False	True	False	False	input_only	EUR:chr1:219590571-221858231	False	original_EUR_top5_B_ge4_selected_set
+RBKS	4	3	True	input_only	False	True	False	False	input_only	EUR:chr2:26894985-28598777	False	original_EUR_top5_B_ge4_selected_set
+REX1BD	7	5	True	input_only	False	True	False	False	input_only	EUR:chr19:18409862-19877471	False	original_EUR_top5_B_ge4_selected_set
+RFXANK	7	5	True	input_only	False	True	False	False	input_only	EUR:chr19:18409862-19877471	False	original_EUR_top5_B_ge4_selected_set
+RIPOR2	5	0	False	retained	False	False	False	False	neither	EUR:chr6:24852275-25684587	True	original_EUR_top5_B_ge4_selected_set
+RTL6	5	5	True	input_only	False	True	False	False	input_only	EUR:chr22:43714200-44995308	False	original_EUR_top5_B_ge4_selected_set
+SAMM50	5	5	True	tss_and_input	True	True	False	True	both	EUR:chr22:43714200-44995308	False	original_EUR_top5_B_ge4_selected_set
+SCGN	5	0	False	retained	False	False	False	False	neither	EUR:chr6:24852275-25684587	True	original_EUR_top5_B_ge4_selected_set
+SCUBE1	5	5	True	input_only	False	True	False	False	input_only	EUR:chr22:43714200-44995308	False	original_EUR_top5_B_ge4_selected_set
+SERPINA10	5	4	True	input_only	False	True	False		input_only	EUR:chr14:94325285-95750867	False	original_EUR_top5_B_ge4_selected_set
+SERPINA11	5	4	True	input_only	False	True	False	False	input_only	EUR:chr14:94325285-95750867	False	original_EUR_top5_B_ge4_selected_set
+SERPINA12	5	4	True	input_only	False	True	False	False	input_only	EUR:chr14:94325285-95750867	False	original_EUR_top5_B_ge4_selected_set
+SERPINA13P	5	4	True	input_only	False	True	False		input_only		False	original_EUR_top5_B_ge4_selected_set
+SERPINA2	5	4	True	input_only	False	True	True		input_only		False	original_EUR_top5_B_ge4_selected_set
+SERPINA3	5	4	True	input_only	False	True	False	False	input_only	EUR:chr14:94325285-95750867	False	original_EUR_top5_B_ge4_selected_set
+SERPINA4	5	4	True	input_only	False	True	False	False	input_only	EUR:chr14:94325285-95750867	False	original_EUR_top5_B_ge4_selected_set
+SERPINA5	5	4	True	input_only	False	True	False	False	input_only	EUR:chr14:94325285-95750867	False	original_EUR_top5_B_ge4_selected_set
+SERPINA6	5	4	True	input_only	False	True	False		input_only	EUR:chr14:94325285-95750867	False	original_EUR_top5_B_ge4_selected_set
+SERPINA9	5	4	True	input_only	False	True	False	False	input_only	EUR:chr14:94325285-95750867	False	original_EUR_top5_B_ge4_selected_set
+SHISAL1	5	5	True	input_only	False	True	False	False	input_only	EUR:chr22:43714200-44995308	False	original_EUR_top5_B_ge4_selected_set
+SLC10A6	4	1	True	input_only	False	True	False	False	input_only	EUR:chr4:87534648-89238028	False	original_EUR_top5_B_ge4_selected_set
+SLC17A1	5	0	False	retained	False	False	False	False	neither	EUR:chr6:25684587-26791233	True	original_EUR_top5_B_ge4_selected_set
+SLC17A2	5	0	False	retained	False	False	False	False	neither	EUR:chr6:25684587-26791233	True	original_EUR_top5_B_ge4_selected_set
+SLC17A3	5	0	False	retained	False	False	False	False	neither	EUR:chr6:25684587-26791233	True	original_EUR_top5_B_ge4_selected_set
+SLC17A4	5	0	False	retained	False	False	False	False	neither	EUR:chr6:25684587-26791233	True	original_EUR_top5_B_ge4_selected_set
+SLC25A42	7	5	True	input_only	False	True	False	False	input_only	EUR:chr19:18409862-19877471	False	original_EUR_top5_B_ge4_selected_set
+SLC30A3	4	3	True	input_only	False	True	False	False	input_only	EUR:chr2:26894985-28598777	False	original_EUR_top5_B_ge4_selected_set
+SLC35F6	4	3	True	input_only	False	True	False	False	input_only	EUR:chr2:26894985-28598777	False	original_EUR_top5_B_ge4_selected_set
+SLC4A1AP	4	3	True	input_only	False	True	False	False	input_only	EUR:chr2:26894985-28598777	False	original_EUR_top5_B_ge4_selected_set
+SLC5A6	4	3	True	input_only	False	True	False	False	input_only	EUR:chr2:26894985-28598777	False	original_EUR_top5_B_ge4_selected_set
+SNX17	4	3	True	input_only	False	True	False	False	input_only	EUR:chr2:26894985-28598777	False	original_EUR_top5_B_ge4_selected_set
+SPARCL1	4	1	True	input_only	False	True	False	False	input_only	EUR:chr4:87534648-89238028	False	original_EUR_top5_B_ge4_selected_set
+SPP1	4	1	True	input_only	False	True	False	False	input_only	EUR:chr4:87534648-89238028	False	original_EUR_top5_B_ge4_selected_set
+SSBP4	7	5	True	input_only	False	True	False	False	input_only	EUR:chr19:18409862-19877471	False	original_EUR_top5_B_ge4_selected_set
+SUGP2	7	5	True	input_only	False	True	False	False	input_only	EUR:chr19:18409862-19877471	False	original_EUR_top5_B_ge4_selected_set
+SULT4A1	5	5	True	input_only	False	True	False	False	input_only	EUR:chr22:43714200-44995308	False	original_EUR_top5_B_ge4_selected_set
+SUPT7L	4	3	True	input_only	False	True	False	False	input_only	EUR:chr2:26894985-28598777	False	original_EUR_top5_B_ge4_selected_set
+TCF23	4	3	True	input_only	False	True	False	False	input_only	EUR:chr2:26894985-28598777	False	original_EUR_top5_B_ge4_selected_set
+TDP2	5	0	False	retained	False	False	False	False	neither	EUR:chr6:23936619-24852275	True	original_EUR_top5_B_ge4_selected_set
+TMEM161A	7	5	True	input_only	False	True	False	False	input_only	EUR:chr19:18409862-19877471	False	original_EUR_top5_B_ge4_selected_set
+TMEM214	4	3	True	input_only	False	True	False	False	input_only	EUR:chr2:26894985-28598777	False	original_EUR_top5_B_ge4_selected_set
+TMEM59L	7	5	True	input_only	False	True	False	False	input_only	EUR:chr19:18409862-19877471	False	original_EUR_top5_B_ge4_selected_set
+TRIM27	6	0	False	retained	False	False	False		neither	EUR:chr6:28017819-28917608	True	original_EUR_top5_B_ge4_selected_set
+TRIM38	4	0	False	retained	False	False	False	False	neither	EUR:chr6:25684587-26791233	True	original_EUR_top5_B_ge4_selected_set
+TRIM54	4	3	True	input_only	False	True	False	False	input_only	EUR:chr2:26894985-28598777	False	original_EUR_top5_B_ge4_selected_set
+TSPO	5	5	True	input_only	False	True	False	False	input_only	EUR:chr22:42690818-43714200	False	original_EUR_top5_B_ge4_selected_set
+TSSK6	7	5	True	input_only	False	True	False	False	input_only	EUR:chr19:18409862-19877471	False	original_EUR_top5_B_ge4_selected_set
+TTLL1	5	5	True	input_only	False	True	False	False	input_only	EUR:chr22:42690818-43714200	False	original_EUR_top5_B_ge4_selected_set
+TTLL12	5	5	True	input_only	False	True	False	False	input_only	EUR:chr22:42690818-43714200	False	original_EUR_top5_B_ge4_selected_set
+UBA52	7	5	True	input_only	False	True	False	False	input_only	EUR:chr19:18409862-19877471	False	original_EUR_top5_B_ge4_selected_set
+UCN	4	3	True	input_only	False	True	False	False	input_only	EUR:chr2:26894985-28598777	False	original_EUR_top5_B_ge4_selected_set
+UPF1	7	5	True	input_only	False	True	False	False	input_only	EUR:chr19:18409862-19877471	False	original_EUR_top5_B_ge4_selected_set
+YJEFN3	7	5	True	input_only	False	True	False	False	input_only	EUR:chr19:18409862-19877471	False	original_EUR_top5_B_ge4_selected_set
+ZBED9	6	0	False	retained_tss_unresolved	False	False	True		neither		True	original_EUR_top5_B_ge4_selected_set
+ZKSCAN3	6	0	False	retained	False	False	False	False	neither	EUR:chr6:28017819-28917608	True	original_EUR_top5_B_ge4_selected_set
+ZKSCAN4	6	0	False	retained	False	False	False	False	neither	EUR:chr6:28017819-28917608	True	original_EUR_top5_B_ge4_selected_set
+ZKSCAN8	6	0	False	retained	False	False	False	False	neither	EUR:chr6:28017819-28917608	True	original_EUR_top5_B_ge4_selected_set
+ZNF101	7	5	True	input_only	False	True	False	False	input_only	EUR:chr19:18409862-19877471	False	original_EUR_top5_B_ge4_selected_set
+ZNF14	7	5	True	input_only	False	True	False	False	input_only	EUR:chr19:18409862-19877471	False	original_EUR_top5_B_ge4_selected_set
+ZNF165	6	0	False	retained	False	False	False	False	neither	EUR:chr6:28017819-28917608	True	original_EUR_top5_B_ge4_selected_set
+ZNF184	6	0	False	retained	False	False	False	False	neither	EUR:chr6:26791233-28017819	True	original_EUR_top5_B_ge4_selected_set
+ZNF253	7	5	True	input_only	False	True	False	False	input_only	EUR:chr19:19877471-20905757	False	original_EUR_top5_B_ge4_selected_set
+ZNF311	6	0	False	retained	False	False	False		neither	EUR:chr6:28917608-29737971	True	original_EUR_top5_B_ge4_selected_set
+ZNF322	5	0	False	retained	False	False	False	False	neither	EUR:chr6:25684587-26791233	True	original_EUR_top5_B_ge4_selected_set
+ZNF391	5	0	False	retained	False	False	False	False	neither	EUR:chr6:26791233-28017819	True	original_EUR_top5_B_ge4_selected_set
+ZNF486	7	5	True	input_only	False	True	False	False	input_only	EUR:chr19:19877471-20905757	False	original_EUR_top5_B_ge4_selected_set
+ZNF506	7	5	True	input_only	False	True	False	False	input_only	EUR:chr19:19877471-20905757	False	original_EUR_top5_B_ge4_selected_set
+ZNF512	4	3	True	input_only	False	True	False	False	input_only	EUR:chr2:26894985-28598777	False	original_EUR_top5_B_ge4_selected_set
+ZNF513	4	3	True	input_only	False	True	False	False	input_only	EUR:chr2:26894985-28598777	False	original_EUR_top5_B_ge4_selected_set
+ZNF682	7	5	True	input_only	False	True	False	False	input_only	EUR:chr19:19877471-20905757	False	original_EUR_top5_B_ge4_selected_set
+ZNF90	7	5	True	input_only	False	True	False	False	input_only	EUR:chr19:19877471-20905757	False	original_EUR_top5_B_ge4_selected_set
+ZNF93	7	5	True	input_only	False	True	False	False	input_only	EUR:chr19:19877471-20905757	False	original_EUR_top5_B_ge4_selected_set
+ZSCAN12	6	0	False	retained	False	False	False	False	neither	EUR:chr6:28017819-28917608	True	original_EUR_top5_B_ge4_selected_set
+ZSCAN16	6	0	False	retained	False	False	False	False	neither	EUR:chr6:28017819-28917608	True	original_EUR_top5_B_ge4_selected_set
+ZSCAN23	6	0	False	retained	False	False	False	False	neither	EUR:chr6:28017819-28917608	True	original_EUR_top5_B_ge4_selected_set
+ZSCAN26	6	0	False	retained	False	False	False	False	neither	EUR:chr6:28017819-28917608	True	original_EUR_top5_B_ge4_selected_set
+ZSCAN31	6	0	False	retained	False	False	False	False	neither	EUR:chr6:28017819-28917608	True	original_EUR_top5_B_ge4_selected_set
+ZSCAN9	6	0	False	retained	False	False	False	False	neither	EUR:chr6:28017819-28917608	True	original_EUR_top5_B_ge4_selected_set

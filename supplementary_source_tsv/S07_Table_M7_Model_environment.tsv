@@ -1,0 +1,17 @@
+component	value	repository_path	public_url	source_version
+python	3.10.21	metadata/model_environment.json	https://github.com/Chen-Rongchen/HCC-liver-axis-postGWAS/blob/v1.0.0/metadata/model_environment.json	historical_environment; current_revision_environment_in_revision_provenance
+numpy	1.24.4	metadata/model_environment.json	https://github.com/Chen-Rongchen/HCC-liver-axis-postGWAS/blob/v1.0.0/metadata/model_environment.json	historical_environment; current_revision_environment_in_revision_provenance
+pandas	2.3.3	metadata/model_environment.json	https://github.com/Chen-Rongchen/HCC-liver-axis-postGWAS/blob/v1.0.0/metadata/model_environment.json	historical_environment; current_revision_environment_in_revision_provenance
+scipy	1.15.2	metadata/model_environment.json	https://github.com/Chen-Rongchen/HCC-liver-axis-postGWAS/blob/v1.0.0/metadata/model_environment.json	historical_environment; current_revision_environment_in_revision_provenance
+statsmodels	0.14.6	metadata/model_environment.json	https://github.com/Chen-Rongchen/HCC-liver-axis-postGWAS/blob/v1.0.0/metadata/model_environment.json	historical_environment; current_revision_environment_in_revision_provenance
+pixi_manifest	github_release/HCC-liver-axis-postGWAS/pixi.toml	source_snapshot/historical_environment/pixi.toml	https://github.com/Chen-Rongchen/HCC-liver-axis-postGWAS/blob/v1.0.0/source_snapshot/historical_environment/pixi.toml	historical_environment; current_revision_environment_in_revision_provenance
+pixi_lock_sha256	6f5ba29b6a3f1f584a1321afa38c4910a68764e5cfb2ed60daafadb9d2e45fa4	pixi.lock	https://github.com/Chen-Rongchen/HCC-liver-axis-postGWAS/blob/v1.0.0/pixi.lock	historical_environment; current_revision_environment_in_revision_provenance
+regional_susieR	0.14.2	source_snapshot/analysis_hbsn_restructure/code/31_run_shared_signal_region.R.txt	https://github.com/Chen-Rongchen/HCC-liver-axis-postGWAS/blob/v1.0.0/source_snapshot/analysis_hbsn_restructure/code/31_run_shared_signal_region.R.txt	historical_environment; current_revision_environment_in_revision_provenance
+regional_coloc	5.2.3	source_snapshot/analysis_hbsn_restructure/code/31_run_shared_signal_region.R.txt	https://github.com/Chen-Rongchen/HCC-liver-axis-postGWAS/blob/v1.0.0/source_snapshot/analysis_hbsn_restructure/code/31_run_shared_signal_region.R.txt	historical_environment; current_revision_environment_in_revision_provenance
+regional_R_finite_available	FALSE	source_snapshot/analysis_hbsn_restructure/code/31_run_shared_signal_region.R.txt	https://github.com/Chen-Rongchen/HCC-liver-axis-postGWAS/blob/v1.0.0/source_snapshot/analysis_hbsn_restructure/code/31_run_shared_signal_region.R.txt	historical_environment; current_revision_environment_in_revision_provenance
+regional_R_mismatch_available	FALSE	source_snapshot/analysis_hbsn_restructure/code/31_run_shared_signal_region.R.txt	https://github.com/Chen-Rongchen/HCC-liver-axis-postGWAS/blob/v1.0.0/source_snapshot/analysis_hbsn_restructure/code/31_run_shared_signal_region.R.txt	historical_environment; current_revision_environment_in_revision_provenance
+revision_python	3.10.12			current_revision_actual_runtime
+revision_numpy	1.24.4			current_revision_actual_runtime
+revision_pandas	2.3.0			current_revision_actual_runtime
+revision_scipy	1.15.2			current_revision_actual_runtime
+revision_statsmodels	0.14.6			current_revision_actual_runtime

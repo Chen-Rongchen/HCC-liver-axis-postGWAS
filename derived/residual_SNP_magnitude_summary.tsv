@@ -1,0 +1,3 @@
+branch	pairs	median_abs_snp_difference	max_abs_snp_difference	median_abs_log_ratio	KS	high_blocks	low_blocks	balance_gate
+boundary	148	819	2096	0.15691937841203621	0.20270270270270271	30	44	FAILED
+neutral	149	862	2096	0.1592985713376357	0.20134228187919462	30	44	FAILED

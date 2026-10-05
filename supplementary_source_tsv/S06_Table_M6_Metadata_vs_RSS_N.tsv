@@ -1,0 +1,12 @@
+trait	min	max	official_total_N	note	current_inference_status
+AIH	485234	485234	485234	RSS uses available variant N, not necessarily metadata total; retain separately	historical_registry_only_effect_encoding_N_and_LD_not_certified
+ALP	437438	437438	437438	RSS uses available variant N, not necessarily metadata total; retain separately	historical_registry_only_effect_encoding_N_and_LD_not_certified
+ALT	437267	437267	437267	RSS uses available variant N, not necessarily metadata total; retain separately	historical_registry_only_effect_encoding_N_and_LD_not_certified
+AST	342990	342990	342990	RSS uses available variant N, not necessarily metadata total; retain separately	historical_registry_only_effect_encoding_N_and_LD_not_certified
+BILI	342829	342829	342829	RSS uses available variant N, not necessarily metadata total; retain separately	historical_registry_only_effect_encoding_N_and_LD_not_certified
+CIRR	1522690	1580010	1580011	RSS uses available variant N, not necessarily metadata total; retain separately	historical_registry_only_effect_encoding_N_and_LD_not_certified
+GGT	437194	437194	437194	RSS uses available variant N, not necessarily metadata total; retain separately	historical_registry_only_effect_encoding_N_and_LD_not_certified
+LIVER_FAT	32858	32858	32858	RSS uses available variant N, not necessarily metadata total; retain separately	historical_registry_only_effect_encoding_N_and_LD_not_certified
+NAFLD	778614	778614	778614	RSS uses available variant N, not necessarily metadata total; retain separately	historical_registry_only_effect_encoding_N_and_LD_not_certified
+PBC	24510	24510	24510	RSS uses available variant N, not necessarily metadata total; retain separately	historical_registry_only_effect_encoding_N_and_LD_not_certified
+PSC	14890	14890	14890	RSS uses available variant N, not necessarily metadata total; retain separately	historical_registry_only_effect_encoding_N_and_LD_not_certified
