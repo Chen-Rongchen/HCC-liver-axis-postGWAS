@@ -9,3 +9,5 @@ Rule A was defined after the original findings and changes the analyzed gene pop
 The archive supplies code and shareable derived research data. Full raw GWAS datasets and individual-level reference resources are not redistributed; obtain them under the providers' access and reuse terms.
 
 The four supplementary display workbooks are mapped to their original TSV schemas by metadata/submission_display_schema.json. Figure source data are in figure_source_data/; report-display identities and validation outputs are in nomenclature/.
+
+`code/render_figures.py` renders the three main figures directly from frozen display tables into PDF, SVG and PNG. It does not refit models. Arial is requested from the system font configuration; fonts available on another system may affect layout. `metadata/figure_render.json` records source hashes and displayed estimates. The current SVG displays are retained alongside the source tables.

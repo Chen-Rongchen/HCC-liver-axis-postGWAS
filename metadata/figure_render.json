@@ -1,0 +1,63 @@
+{
+  "source_sha256": {
+    "Fig1_analysis_populations.tsv": "b140f6af83d7685d9fb487542b9ca8a7d25a043567c3ea802704b84544ba4aaf",
+    "Fig2_M2_membership_sensitivity.tsv": "e2675ec616f20e0f5122ab24a38b76c69647a554112886a62bee7acb6599cb38",
+    "Fig3_a_pair_composition.tsv": "36bd3abb78975a7fb0a5e6cdae2f83a00fd3d8107002d77ae290c03d2e0b1ed7",
+    "Fig3_b_chr19_incidence_matrix.tsv": "15b7f3a65a787b1fba2e31e3feefe848ec18282f99e176e7ceb39be31f7ea6a7",
+    "Fig3_c_chr6_variant_trait_counts.tsv": "09c0479f097253eda3daabfa9df4ac8fbeadf133dfb7a84d05462bfae3e44148",
+    "Fig3_b_chr19_event_edges.tsv": "b9b67b965427f9e47efe6c5e865fb0313730f1db33577546d746461a814b182a"
+  },
+  "model_rows": [
+    {
+      "ancestry": "EUR",
+      "population": "original",
+      "estimate": 0.6918456093504334,
+      "ci_low": -0.004444017853434401,
+      "ci_high": 1.3881352365543012,
+      "label": "0.692 [-0.004, 1.388]"
+    },
+    {
+      "ancestry": "EUR",
+      "population": "retained",
+      "estimate": 0.0025413173162087688,
+      "ci_low": -0.7427226803381609,
+      "ci_high": 0.7478053149705784,
+      "label": "0.003 [-0.743, 0.748]"
+    },
+    {
+      "ancestry": "EAS",
+      "population": "original",
+      "estimate": 0.25571097561177064,
+      "ci_low": -0.1870627397426916,
+      "ci_high": 0.6984846909662329,
+      "label": "0.256 [-0.187, 0.698]"
+    },
+    {
+      "ancestry": "EAS",
+      "population": "retained",
+      "estimate": 0.15511615578793964,
+      "ci_low": -0.2442282707928251,
+      "ci_high": 0.5544605823687043,
+      "label": "0.155 [-0.244, 0.554]"
+    }
+  ],
+  "figure_sizes_pt": [
+    [
+      510,
+      346
+    ],
+    [
+      510,
+      262
+    ],
+    [
+      510,
+      620
+    ]
+  ],
+  "models_run": 0,
+  "chr19_genes": 50,
+  "chr19_events": 154,
+  "chr6_variants": 10,
+  "chr6_events": 194
+}

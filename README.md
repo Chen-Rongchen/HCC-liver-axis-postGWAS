@@ -7,9 +7,10 @@ Code and derived data for studying recurrent liver-trait gene evidence and regio
 ```sh
 pixi run check
 pixi run replay-models
+pixi run python code/render_figures.py
 ```
 
-These commands validate the archived model inputs and reproduce existing unmasked model estimates.
+The first two commands validate the archived model inputs and reproduce existing unmasked model estimates. The plotting command renders three figures from frozen source tables.
 
 ## Files
 
